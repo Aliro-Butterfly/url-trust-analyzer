@@ -53,7 +53,7 @@ Le frontend est déjà configuré pour proxyfier `/api` vers le backend.
 
 ## Endpoint d'analyse
 
-- `POST /analyze` : analyse une URL via ICANN/RDAP
+- `POST /analyze` : analyse une URL via plusieurs sources (RDAP, URL statique, DNS, et signaux de réputation)
 
 Exemple :
 

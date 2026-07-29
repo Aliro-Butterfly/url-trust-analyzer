@@ -59,6 +59,17 @@ def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakd
     elif "age" in score_breakdown:
         reasons.append("The domain is relatively new.")
 
+    if score_breakdown.get("reputation", 0) >= 80:
+        reasons.append("The URL has a good reputation signal.")
+    elif "reputation" in score_breakdown:
+        reasons.append("The URL has weak reputation signals.")
+
+    if score_breakdown.get("malware", 0) < 60:
+        reasons.append("Suspicious URL patterns were detected that lower the malware score.")
+
+    if score_breakdown.get("blacklists", 0) < 70:
+        reasons.append("The URL matches patterns commonly found in blocklist heuristics.")
+
     if len(provider_results) > 1:
         reasons.append(f"{len(provider_results)} sources were used for this analysis.")
 

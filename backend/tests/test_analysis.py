@@ -3,8 +3,9 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
-from backend.app.providers.icann import IcannProvider
 from backend.app.providers.dns_provider import DnsProvider
+from backend.app.providers.icann import IcannProvider
+from backend.app.providers.reputation_provider import ReputationProvider
 
 
 class FakeResponse:
@@ -82,6 +83,18 @@ def test_dns_provider_returns_a_result(monkeypatch):
     assert result["dimensions"]["transparency"] >= 90
 
 
+def test_reputation_provider_returns_a_result():
+    provider = ReputationProvider()
+    result = asyncio.run(provider.analyze("https://example.com/login?user=test"))
+
+    assert result["provider"] == "Reputation Signals"
+    assert result["status"] == "success"
+    assert "reputation" in result["dimensions"]
+    assert "malware" in result["dimensions"]
+    assert "blacklists" in result["dimensions"]
+    assert 0 <= result["dimensions"]["reputation"] <= 100
+
+
 def test_analyze_endpoint_returns_a_report(monkeypatch):
     async def fake_get(self, url, timeout=10.0):
         if "rdap.org" in url:
@@ -113,6 +126,6 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 70
-    assert len(payload["results"]) == 3
+    assert len(payload["results"]) == 4
     assert "reasons" in payload
     assert isinstance(payload["reasons"], list)
