@@ -222,7 +222,7 @@ class URLScanProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        api_key = os.getenv("URLSCAN_API_KEY")
+        api_key = api_key or os.getenv("URLSCAN_API_KEY")
         if api_key:
             try:
                 async with httpx.AsyncClient(timeout=20.0, headers={"API-Key": api_key}) as client:

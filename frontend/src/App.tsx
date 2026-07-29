@@ -32,6 +32,25 @@ interface AuthResponse {
   username: string;
 }
 
+function formatDetail(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join(", ") : "(empty)";
+  }
+  if (value === null || value === undefined) {
+    return "(none)";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function scoreClass(score: number): string {
+  if (score >= 70) return "score-green";
+  if (score >= 40) return "score-yellow";
+  return "score-red";
+}
+
 function App() {
   const [url, setUrl] = useState("https://example.com");
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -49,6 +68,7 @@ function App() {
     has_virustotal: false,
   });
   const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
   const [urlscanKey, setUrlscanKey] = useState("");
   const [googleSafeBrowsingKey, setGoogleSafeBrowsingKey] = useState("");
@@ -170,9 +190,13 @@ function App() {
       "Providers:",
       ...analysis.results.flatMap((item) => [
         `=== ${item.provider} ===`,
+        `Status: ${item.status}`,
         `Summary: ${item.summary}`,
         `Score: ${item.score}`,
         `Confidence: ${item.confidence}%`,
+        ...(Object.keys(item.details).length > 0
+          ? Object.entries(item.details).map(([key, val]) => `  ${key}: ${formatDetail(val)}`)
+          : ["  No additional data."]),
         "",
       ]),
     ];
@@ -184,6 +208,28 @@ function App() {
     const link = document.createElement("a");
     link.href = url;
     link.download = `${analysis.url.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_report.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadCSV = () => {
+    if (!analysis) return;
+
+    const headers = ["Provider", "Status", "Score", "Confidence", "Summary"];
+    const rows = analysis.results.map((r) =>
+      [r.provider, r.status, String(r.score), `${r.confidence}%`, r.summary].map((c) =>
+        `"${c.replace(/"/g, '""')}"`
+      ).join(",")
+    );
+
+    const csv = "\uFEFF" + [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${analysis.url.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_report.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -369,8 +415,14 @@ function App() {
             {analysis && (
               <>
                 <div className="button-row">
+                  <button type="button" onClick={() => setViewMode(viewMode === "cards" ? "table" : "cards")} className="secondary-button">
+                    {viewMode === "cards" ? "Table View" : "Card View"}
+                  </button>
                   <button type="button" onClick={downloadReport} className="secondary-button">
-                    Create Report
+                    .TXT Report
+                  </button>
+                  <button type="button" onClick={downloadCSV} className="secondary-button">
+                    .CSV Export
                   </button>
                 </div>
                 <div className="result-header">
@@ -409,18 +461,58 @@ function App() {
                   </div>
                 </div>
 
-                <div className="provider-list">
-                  {analysis.results.map((item) => (
-                    <article key={item.provider} className="provider-card">
-                      <h2>{item.provider}</h2>
-                      <p>{item.summary}</p>
-                      <div className="provider-metrics">
-                        <span>Score: {item.score}</span>
-                        <span>Confidence: {item.confidence}%</span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                {viewMode === "table" ? (
+                  <div className="comparison-table-wrapper">
+                    <table className="comparison-table">
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th>Status</th>
+                          <th>Score</th>
+                          <th>Confidence</th>
+                          <th>Summary</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analysis.results.map((item) => (
+                          <tr key={item.provider} className={item.status === "error" ? "row-error" : ""}>
+                            <td><strong>{item.provider}</strong></td>
+                            <td><span className={`provider-status provider-status--${item.status}`}>{item.status}</span></td>
+                            <td><span className={`score-badge ${scoreClass(item.score)}`}>{item.score}</span></td>
+                            <td>{item.confidence}%</td>
+                            <td className="summary-cell">{item.summary}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="provider-list">
+                    {analysis.results.map((item) => (
+                      <article key={item.provider} className={`provider-card ${item.status === "error" ? "provider-card--error" : ""}`}>
+                        <div className="provider-card-header">
+                          <h2>{item.provider}</h2>
+                          <span className={`provider-status provider-status--${item.status}`}>{item.status}</span>
+                        </div>
+                        <p className="provider-summary">{item.summary}</p>
+                        <div className="provider-metrics">
+                          <span>Score: <strong className={scoreClass(item.score)}>{item.score}</strong></span>
+                          <span>Confidence: {item.confidence}%</span>
+                        </div>
+                        {Object.keys(item.details).length > 0 && (
+                          <div className="provider-details">
+                            {Object.entries(item.details).map(([key, value]) => (
+                              <div key={key} className="detail-row">
+                                <span className="detail-key">{key.replace(/_/g, " ")}</span>
+                                <span className="detail-value">{formatDetail(value)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </section>

@@ -33,8 +33,6 @@ class AnalyzerService:
 
     async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
         provider_results = []
-        scores = []
-        confidences = []
         normalized_url = str(request.url).rstrip("/")
 
         for provider in self.providers:
@@ -59,13 +57,15 @@ class AnalyzerService:
                     dimensions=result.get("dimensions", {}),
                 )
             )
-            scores.append(result["score"])
-            confidences.append(result["confidence"])
 
-        score_breakdown = compute_dimension_scores(provider_results)
+        successful = [pr for pr in provider_results if pr.status == "success"]
+        score_breakdown = compute_dimension_scores(successful)
         overall_score = compute_overall_score(score_breakdown)
-        average_confidence = round(sum(confidences) / len(confidences)) if confidences else 0
-        reasons = build_trust_reasons(provider_results, score_breakdown)
+        average_confidence = (
+            round(sum(pr.confidence for pr in successful) / len(successful))
+            if successful else 0
+        )
+        reasons = build_trust_reasons(provider_results, score_breakdown, successful)
 
         return AnalysisResponse(
             url=normalized_url,

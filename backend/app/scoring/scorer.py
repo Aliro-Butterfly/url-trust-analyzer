@@ -40,7 +40,11 @@ def compute_overall_score(score_breakdown: dict[str, int]) -> int:
     return round(weighted_total / available_weight)
 
 
-def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakdown: dict[str, int]) -> list[str]:
+def build_trust_reasons(
+    provider_results: list[ProviderResult],
+    score_breakdown: dict[str, int],
+    successful: list[ProviderResult] | None = None,
+) -> list[str]:
     reasons: list[str] = []
 
     if not provider_results:
@@ -49,6 +53,9 @@ def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakd
     errors = [result.provider for result in provider_results if result.status != "success"]
     if errors:
         reasons.append("Some providers did not return full data.")
+
+    if successful is not None:
+        reasons.append(f"{len(successful)}/{len(provider_results)} providers completed successfully.")
 
     if score_breakdown.get("https", 0) >= 80:
         reasons.append("The URL uses HTTPS.")
