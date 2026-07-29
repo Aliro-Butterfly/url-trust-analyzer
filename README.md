@@ -40,6 +40,8 @@ npm run dev
 
 Le frontend écoute sur : http://127.0.0.1:5173 et proxifie les requêtes `/api` vers le backend.
 
+Le tableau de bord affiche maintenant l’historique des analyses effectuées.
+
 ## Exécution avec Docker Compose
 
 ```bash

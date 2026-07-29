@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 interface ProviderResult {
   provider: string;
@@ -18,11 +18,38 @@ interface AnalysisResponse {
   results: ProviderResult[];
 }
 
+interface HistoryItem {
+  id: number;
+  url: string;
+  overall_score: number;
+  confidence: number;
+  created_at: string;
+  report: AnalysisResponse;
+}
+
 function App() {
   const [url, setUrl] = useState("https://example.com");
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const loadHistory = async () => {
+    try {
+      const response = await fetch("/api/history");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const historyPayload = await response.json();
+      setHistory(historyPayload);
+    } catch (err) {
+      console.warn("Unable to load history", err);
+    }
+  };
+
+  useEffect(() => {
+    loadHistory();
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -43,6 +70,7 @@ function App() {
 
       const payload = (await response.json()) as AnalysisResponse;
       setAnalysis(payload);
+      await loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Une erreur est survenue.");
     } finally {
@@ -126,6 +154,28 @@ function App() {
             </div>
           </section>
         )}
+
+        <section className="history-card">
+          <h2>Historique des analyses</h2>
+          {history.length === 0 ? (
+            <p>Aucune analyse enregistrée pour le moment.</p>
+          ) : (
+            <ul className="history-list">
+              {history.map((item) => (
+                <li key={item.id} className="history-item">
+                  <div>
+                    <strong>{item.url}</strong>
+                    <span>{new Date(item.created_at).toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span>Score : {item.overall_score}</span>
+                    <span>Confiance : {item.confidence}%</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );

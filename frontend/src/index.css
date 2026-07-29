@@ -172,3 +172,49 @@ header p {
   background: #f8fafc;
   overflow-x: auto;
 }
+
+.history-card {
+  margin-top: 32px;
+  padding: 20px;
+  border-radius: 24px;
+  border: 1px solid #e5e7eb;
+  background: white;
+}
+
+.history-card h2 {
+  margin-top: 0;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  align-items: center;
+}
+
+.history-item div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-item strong {
+  font-weight: 600;
+}
+
+.history-item span {
+  color: #475569;
+  font-size: 0.95rem;
+}
