@@ -9,6 +9,7 @@ WEIGHTS = {
     "malware": 30,
     "reputation": 20,
     "age": 15,
+    "threat_intel": 15,
     "infrastructure": 10,
     "https": 10,
     "blacklists": 10,
@@ -69,6 +70,9 @@ def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakd
 
     if score_breakdown.get("blacklists", 0) < 70:
         reasons.append("The URL matches patterns commonly found in blocklist heuristics.")
+
+    if score_breakdown.get("threat_intel", 0) < 60:
+        reasons.append("External threat intelligence signals indicate risk or insufficient data.")
 
     if len(provider_results) > 1:
         reasons.append(f"{len(provider_results)} sources were used for this analysis.")

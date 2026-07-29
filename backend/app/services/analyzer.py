@@ -1,11 +1,33 @@
-from ..providers import DnsProvider, IcannProvider, ReputationProvider, UrlPropertiesProvider
+from ..providers import (
+    DnsProvider,
+    GoogleSafeBrowsingProvider,
+    IcannProvider,
+    ReputationProvider,
+    ScamDocProvider,
+    SucuriProvider,
+    TalosProvider,
+    UrlPropertiesProvider,
+    UrlVoidProvider,
+    VirusTotalProvider,
+)
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
 from ..scoring.scorer import build_trust_reasons, compute_dimension_scores, compute_overall_score
 
 
 class AnalyzerService:
     def __init__(self) -> None:
-        self.providers = [IcannProvider(), UrlPropertiesProvider(), DnsProvider(), ReputationProvider()]
+        self.providers = [
+            IcannProvider(),
+            UrlPropertiesProvider(),
+            DnsProvider(),
+            ReputationProvider(),
+            VirusTotalProvider(),
+            UrlVoidProvider(),
+            SucuriProvider(),
+            TalosProvider(),
+            GoogleSafeBrowsingProvider(),
+            ScamDocProvider(),
+        ]
 
     async def analyze(self, request: AnalyzeRequest) -> AnalysisResponse:
         provider_results = []

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -31,9 +32,10 @@ def create_temporary_db(monkeypatch):
 
 
 def register_test_user(client):
-    response = client.post("/auth/register", json={"username": "testuser", "password": "password123"})
+    username = f"testuser_{uuid.uuid4().hex[:8]}"
+    response = client.post("/auth/register", json={"username": username, "password": "password123"})
     assert response.status_code == 200
-    return response.json()["username"]
+    return username
 
 
 def test_health_endpoint_returns_ok():
@@ -141,8 +143,11 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["url"] == "https://example.com"
-    assert payload["overall_score"] >= 70
-    assert len(payload["results"]) == 4
+    assert payload["overall_score"] >= 50
+    assert len(payload["results"]) == 10
+    assert any(result["provider"] == "VirusTotal" for result in payload["results"])
+    assert any(result["provider"] == "Google Safe Browsing" for result in payload["results"])
+    assert any(result["provider"] == "Cisco Talos" for result in payload["results"])
     assert "reasons" in payload
     assert isinstance(payload["reasons"], list)
 
@@ -197,3 +202,44 @@ def test_protected_endpoints_require_auth():
 
     history_response = client.get("/history")
     assert history_response.status_code == 401
+
+
+def test_history_is_scoped_per_user(monkeypatch):
+    create_temporary_db(monkeypatch)
+
+    async def fake_get(self, url, timeout=10.0):
+        if "rdap.org" in url:
+            return FakeResponse(
+                {
+                    "ldhName": "example.com",
+                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
+                }
+            )
+        if "dns.google" in url:
+            return FakeResponse(
+                {
+                    "Answer": [
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+                    ]
+                }
+            )
+        return FakeResponse({})
+
+    monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
+    monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
+
+    client = TestClient(app)
+    register_test_user(client)
+
+    client.post("/analyze", json={"url": "https://example.com"})
+    history_response = client.get("/history")
+    assert history_response.status_code == 200
+    assert len(history_response.json()) == 1
+
+    second_client = TestClient(app)
+    register_test_user(second_client)
+    second_history = second_client.get("/history")
+    assert second_history.status_code == 200
+    assert second_history.json() == []
