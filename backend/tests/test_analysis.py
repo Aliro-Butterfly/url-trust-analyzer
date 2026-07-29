@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.providers.icann import IcannProvider
+from backend.app.providers.dns_provider import DnsProvider
 
 
 class FakeResponse:
@@ -58,16 +59,52 @@ def test_url_properties_provider_returns_a_result():
     assert result["details"]["host"] == "example.com"
 
 
-def test_analyze_endpoint_returns_a_report(monkeypatch):
+def test_dns_provider_returns_a_result(monkeypatch):
     async def fake_get(self, url, timeout=10.0):
         return FakeResponse(
             {
-                "ldhName": "example.com",
-                "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
+                "Answer": [
+                    {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                    {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                    {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+                ]
             }
         )
 
+    monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
+
+    provider = DnsProvider()
+    result = asyncio.run(provider.analyze("https://example.com"))
+
+    assert result["provider"] == "DNS Infrastructure"
+    assert result["status"] == "success"
+    assert result["dimensions"]["infrastructure"] >= 90
+    assert result["dimensions"]["transparency"] >= 90
+
+
+def test_analyze_endpoint_returns_a_report(monkeypatch):
+    async def fake_get(self, url, timeout=10.0):
+        if "rdap.org" in url:
+            return FakeResponse(
+                {
+                    "ldhName": "example.com",
+                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
+                }
+            )
+        if "dns.google" in url:
+            return FakeResponse(
+                {
+                    "Answer": [
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+                    ]
+                }
+            )
+        return FakeResponse({})
+
     monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
+    monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
 
     client = TestClient(app)
     response = client.post("/analyze", json={"url": "https://example.com"})
@@ -76,6 +113,6 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 70
-    assert len(payload["results"]) == 2
+    assert len(payload["results"]) == 3
     assert "reasons" in payload
     assert isinstance(payload["reasons"], list)
