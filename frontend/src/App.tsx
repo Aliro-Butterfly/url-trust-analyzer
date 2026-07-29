@@ -304,47 +304,50 @@ function App() {
             {authError && <div className="toast error">{authError}</div>}
           </section>
         ) : (
-          <section className="result-card">
-            <div className="result-header">
-              <div>
-                <p>Signed in as</p>
-                <strong>{user}</strong>
+          <>
+            <section className="result-card">
+              <div className="result-header">
+                <div>
+                  <p>Signed in as</p>
+                  <strong>{user}</strong>
+                </div>
+                <div>
+                  <button type="button" onClick={handleLogout}>
+                    Logout
+                  </button>
+                </div>
               </div>
-              <div>
-                <button type="button" onClick={handleLogout}>
-                  Logout
+            </section>
+            <section className="result-card">
+              <h2>API Keys</h2>
+              <p className="subtext">Store your provider API keys securely for your account. Only you can use these keys.</p>
+              <form onSubmit={handleApiKeysSubmit} className="search-form">
+                <input
+                  type="password"
+                  value={urlscanKey}
+                  onChange={(event) => setUrlscanKey(event.target.value)}
+                  placeholder={apiKeyStatus.has_urlscan ? "URLScan key stored — enter new to replace" : "URLScan API key"}
+                />
+                <input
+                  type="password"
+                  value={googleSafeBrowsingKey}
+                  onChange={(event) => setGoogleSafeBrowsingKey(event.target.value)}
+                  placeholder={apiKeyStatus.has_google_safebrowsing ? "Google Safe Browsing key stored — enter new to replace" : "Google Safe Browsing API key"}
+                />
+                <input
+                  type="password"
+                  value={virusTotalKey}
+                  onChange={(event) => setVirusTotalKey(event.target.value)}
+                  placeholder={apiKeyStatus.has_virustotal ? "VirusTotal key stored — enter new to replace" : "VirusTotal API key"}
+                />
+                <button type="submit" disabled={apiKeyLoading}>
+                  {apiKeyLoading ? "Saving..." : "Save API Keys"}
                 </button>
-              </div>
-            </div>
-          </section>
-          <section className="result-card">
-            <h2>API Keys</h2>
-            <p className="subtext">Store your provider API keys securely for your account. Only you can use these keys.</p>
-            <form onSubmit={handleApiKeysSubmit} className="search-form">
-              <input
-                type="password"
-                value={urlscanKey}
-                onChange={(event) => setUrlscanKey(event.target.value)}
-                placeholder={apiKeyStatus.has_urlscan ? "URLScan key stored — enter new to replace" : "URLScan API key"}
-              />
-              <input
-                type="password"
-                value={googleSafeBrowsingKey}
-                onChange={(event) => setGoogleSafeBrowsingKey(event.target.value)}
-                placeholder={apiKeyStatus.has_google_safebrowsing ? "Google Safe Browsing key stored — enter new to replace" : "Google Safe Browsing API key"}
-              />
-              <input
-                type="password"
-                value={virusTotalKey}
-                onChange={(event) => setVirusTotalKey(event.target.value)}
-                placeholder={apiKeyStatus.has_virustotal ? "VirusTotal key stored — enter new to replace" : "VirusTotal API key"}
-              />
-              <button type="submit" disabled={apiKeyLoading}>
-                {apiKeyLoading ? "Saving..." : "Save API Keys"}
-              </button>
-            </form>
-            {apiKeyMessage && <div className="toast success">{apiKeyMessage}</div>}
-          </section>        )}
+              </form>
+              {apiKeyMessage && <div className="toast success">{apiKeyMessage}</div>}
+            </section>
+          </>
+        )}
 
         {user && (
           <section className="result-card">
