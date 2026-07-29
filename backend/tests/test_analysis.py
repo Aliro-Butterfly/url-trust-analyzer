@@ -45,6 +45,19 @@ def test_icann_provider_returns_a_result(monkeypatch):
     assert result["score"] >= 70
 
 
+def test_url_properties_provider_returns_a_result():
+    from backend.app.providers.url_properties import UrlPropertiesProvider
+
+    provider = UrlPropertiesProvider()
+    result = asyncio.run(provider.analyze("https://example.com/path"))
+
+    assert result["provider"] == "URL Properties"
+    assert result["status"] == "success"
+    assert result["score"] >= 80
+    assert result["details"]["scheme"] == "https"
+    assert result["details"]["host"] == "example.com"
+
+
 def test_analyze_endpoint_returns_a_report(monkeypatch):
     async def fake_get(self, url, timeout=10.0):
         return FakeResponse(
@@ -63,4 +76,6 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 70
-    assert len(payload["results"]) == 1
+    assert len(payload["results"]) == 2
+    assert "reasons" in payload
+    assert isinstance(payload["reasons"], list)
