@@ -18,4 +18,5 @@ class AnalysisResponse(BaseModel):
     url: str
     overall_score: int
     confidence: int
+    reasons: list[str]
     results: list[ProviderResult]

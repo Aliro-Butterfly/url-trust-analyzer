@@ -82,6 +82,25 @@ header p {
   gap: 16px;
 }
 
+.analysis-reasons {
+  margin: 24px 0;
+}
+
+.analysis-reasons h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.analysis-reasons ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #334155;
+}
+
+.analysis-reasons li {
+  margin-bottom: 8px;
+}
+
 .result-header > div {
   flex: 1;
   min-width: 180px;

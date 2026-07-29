@@ -13,6 +13,7 @@ interface AnalysisResponse {
   url: string;
   overall_score: number;
   confidence: number;
+  reasons: string[];
   results: ProviderResult[];
 }
 
@@ -86,6 +87,15 @@ function App() {
                 <p>Confiance</p>
                 <strong>{analysis.confidence}%</strong>
               </div>
+            </div>
+
+            <div className="analysis-reasons">
+              <h2>Pourquoi ?</h2>
+              <ul>
+                {analysis.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
             </div>
 
             <div className="provider-list">
