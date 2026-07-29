@@ -50,9 +50,12 @@ def build_trust_reasons(
     if not provider_results:
         return ["No providers were available for this analysis."]
 
-    errors = [result.provider for result in provider_results if result.status != "success"]
+    errors = [r.provider for r in provider_results if r.status == "error"]
+    no_data = [r.provider for r in provider_results if r.status == "no_data"]
     if errors:
-        reasons.append("Some providers did not return full data.")
+        reasons.append(f"Some providers encountered errors: {', '.join(errors)}.")
+    if no_data:
+        reasons.append(f"Some providers had no data available: {', '.join(no_data)}.")
 
     if successful is not None:
         reasons.append(f"{len(successful)}/{len(provider_results)} providers completed successfully.")

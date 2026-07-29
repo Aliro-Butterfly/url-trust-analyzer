@@ -31,15 +31,15 @@ async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
         return None
 
 
-def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str]:
+def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str, bool]:
     lower = content.lower()
     if any(token in lower for token in negative):
-        return 28, "The scraped page contains negative reputation indicators."
+        return 28, "The scraped page contains negative reputation indicators.", True
 
     if any(token in lower for token in positive):
-        return 90, "The scraped page contains positive reputation indicators."
+        return 90, "The scraped page contains positive reputation indicators.", True
 
-    return 60, "The scraped page did not contain a clear verdict."
+    return 60, "The scraped page did not contain a clear verdict.", False
 
 
 def _clamp(value: int) -> int:
@@ -100,22 +100,22 @@ class VirusTotalProvider(Provider):
                 "confidence": 35,
                 "summary": "VirusTotal scraping did not return a usable page.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 55},
+                "dimensions": {},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["no threats detected", "harmless", "clean site", "detected by 0"],
             negative=["malicious", "phishing", "suspicious", "unsafe", "threat"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "VirusTotal reputation was evaluated using a best-effort page scrape.",
+            "summary": "VirusTotal reputation was evaluated using a best-effort page scrape." if has_verdict else "VirusTotal scraping did not yield a clear verdict.",
             "details": {"source": "scrape", "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -186,22 +186,22 @@ class GoogleSafeBrowsingProvider(Provider):
                 "confidence": 40,
                 "summary": "Google Safe Browsing lookup did not return usable data.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 58},
+                "dimensions": {},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["no unsafe content", "all clear", "no unsafe content found"],
             negative=["unsafe", "malicious", "phishing", "deceptive"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 72,
-            "summary": "Google Safe Browsing reputation was estimated from the public report page.",
+            "summary": "Google Safe Browsing reputation was estimated from the public report page." if has_verdict else "Google Safe Browsing scraping did not yield a clear verdict.",
             "details": {"source": "scrape", "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -261,20 +261,20 @@ class URLScanProvider(Provider):
             }
 
         if "no results" in page.lower() or "no scans" in page.lower():
-            score = 78
+            has_verdict = False
             note = "URLScan has no public scans for this domain yet."
         else:
-            score = 68
+            has_verdict = True
             note = "URLScan public scan results were found for this domain."
 
         return {
             "provider": self.name,
-            "status": "success",
-            "score": score,
+            "status": "success" if has_verdict else "no_data",
+            "score": 78,
             "confidence": 68,
-            "summary": "URLScan reputation was estimated from public scan data.",
+            "summary": "URLScan reputation was estimated from public scan data." if has_verdict else "URLScan scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": 78} if has_verdict else {},
         }
 
 
@@ -291,7 +291,7 @@ class UrlVoidProvider(Provider):
                 "confidence": 25,
                 "summary": "The URL is invalid.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 50},
+                "dimensions": {},
             }
 
         page = await _fetch_text(f"https://www.urlvoid.com/scan/{urllib.parse.quote(domain)}")
@@ -306,19 +306,19 @@ class UrlVoidProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["not blacklisted", "no blacklist detected", "no threats found"],
             negative=["blacklisted", "malicious", "phishing", "scam"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "URLVoid reputation was estimated from the public site scan page.",
+            "summary": "URLVoid reputation was estimated from the public site scan page." if has_verdict else "URLVoid scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -350,19 +350,19 @@ class SucuriProvider(Provider):
                 "dimensions": {"threat_intel": 55},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["clean site", "no malware found", "site check clean"],
             negative=["malware", "phishing", "blacklisted", "injected"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "Sucuri site scan was estimated using the public result page.",
+            "summary": "Sucuri site scan was estimated using the public result page." if has_verdict else "Sucuri scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -397,19 +397,19 @@ class TalosProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["good", "medium", "known good"],
             negative=["poor", "very poor", "bad", "unverified"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 72,
-            "summary": "Cisco Talos reputation was estimated from the public lookup page.",
+            "summary": "Cisco Talos reputation was estimated from the public lookup page." if has_verdict else "Cisco Talos scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -429,19 +429,19 @@ class ScamDocProvider(Provider):
                 "dimensions": {"threat_intel": 55},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["not a scam", "safe site", "trustworthy"],
             negative=["scam", "fraud", "unsafe", "dangerous"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "ScamDoc reputation was estimated from the public checker page.",
+            "summary": "ScamDoc reputation was estimated from the public checker page." if has_verdict else "ScamDoc scraping did not yield a clear verdict.",
             "details": {"url": url, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 

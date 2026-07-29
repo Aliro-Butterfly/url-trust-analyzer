@@ -51,6 +51,10 @@ function scoreClass(score: number): string {
   return "score-red";
 }
 
+function hasData(status: string): boolean {
+  return status === "success";
+}
+
 function App() {
   const [url, setUrl] = useState("https://example.com");
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -192,8 +196,8 @@ function App() {
         `=== ${item.provider} ===`,
         `Status: ${item.status}`,
         `Summary: ${item.summary}`,
-        `Score: ${item.score}`,
-        `Confidence: ${item.confidence}%`,
+        `Score: ${hasData(item.status) ? item.score : "N/A"}`,
+        `Confidence: ${hasData(item.status) ? `${item.confidence}%` : "N/A"}`,
         ...(Object.keys(item.details).length > 0
           ? Object.entries(item.details).map(([key, val]) => `  ${key}: ${formatDetail(val)}`)
           : ["  No additional data."]),
@@ -219,7 +223,7 @@ function App() {
 
     const headers = ["Provider", "Status", "Score", "Confidence", "Summary"];
     const rows = analysis.results.map((r) =>
-      [r.provider, r.status, String(r.score), `${r.confidence}%`, r.summary].map((c) =>
+      [r.provider, r.status, hasData(r.status) ? String(r.score) : "N/A", hasData(r.status) ? `${r.confidence}%` : "N/A", r.summary].map((c) =>
         `"${c.replace(/"/g, '""')}"`
       ).join(",")
     );
@@ -474,30 +478,35 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {analysis.results.map((item) => (
-                          <tr key={item.provider} className={item.status === "error" ? "row-error" : ""}>
+                        {analysis.results.map((item) => {
+                          const available = hasData(item.status);
+                          return (
+                          <tr key={item.provider} className={!available ? "row-error" : ""}>
                             <td><strong>{item.provider}</strong></td>
                             <td><span className={`provider-status provider-status--${item.status}`}>{item.status}</span></td>
-                            <td><span className={`score-badge ${scoreClass(item.score)}`}>{item.score}</span></td>
-                            <td>{item.confidence}%</td>
+                            <td>{available ? <span className={`score-badge ${scoreClass(item.score)}`}>{item.score}</span> : <span className="score-na">N/A</span>}</td>
+                            <td>{available ? `${item.confidence}%` : "N/A"}</td>
                             <td className="summary-cell">{item.summary}</td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 ) : (
                   <div className="provider-list">
-                    {analysis.results.map((item) => (
-                      <article key={item.provider} className={`provider-card ${item.status === "error" ? "provider-card--error" : ""}`}>
+                    {analysis.results.map((item) => {
+                      const available = hasData(item.status);
+                      return (
+                      <article key={item.provider} className={`provider-card ${!available ? "provider-card--error" : ""}`}>
                         <div className="provider-card-header">
                           <h2>{item.provider}</h2>
                           <span className={`provider-status provider-status--${item.status}`}>{item.status}</span>
                         </div>
                         <p className="provider-summary">{item.summary}</p>
                         <div className="provider-metrics">
-                          <span>Score: <strong className={scoreClass(item.score)}>{item.score}</strong></span>
-                          <span>Confidence: {item.confidence}%</span>
+                          <span>Score: {available ? <strong className={scoreClass(item.score)}>{item.score}</strong> : <strong className="score-na">N/A</strong>}</span>
+                          <span>Confidence: {available ? `${item.confidence}%` : "N/A"}</span>
                         </div>
                         {Object.keys(item.details).length > 0 && (
                           <div className="provider-details">
@@ -510,7 +519,8 @@ function App() {
                           </div>
                         )}
                       </article>
-                    ))}
+                    );
+                  })}
                   </div>
                 )}
               </>
