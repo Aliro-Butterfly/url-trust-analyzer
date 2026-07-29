@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import logo from "./assets/logo.svg";
 
 interface ProviderResult {
   provider: string;
@@ -101,7 +102,7 @@ function App() {
       setPassword("");
       await loadHistory();
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : "Une erreur d'authentification est survenue.");
+      setAuthError(err instanceof Error ? err.message : "Authentication error occurred.");
     } finally {
       setLoading(false);
     }
@@ -117,6 +118,47 @@ function App() {
     setHistory([]);
   };
 
+  const downloadReport = async () => {
+    if (!analysis) {
+      return;
+    }
+
+    const reportLines: string[] = [
+      `URL: ${analysis.url}`,
+      `Overall score: ${analysis.overall_score} / 100`,
+      `Confidence: ${analysis.confidence}%`,
+      "",
+      "Reasons:",
+      ...analysis.reasons.map((reason) => `- ${reason}`),
+      "",
+      "Score breakdown:",
+      ...Object.entries(analysis.score_breakdown).map(
+        ([dimension, value]) => `- ${dimension}: ${value}`
+      ),
+      "",
+      "Providers:",
+      ...analysis.results.flatMap((item) => [
+        `=== ${item.provider} ===`,
+        `Summary: ${item.summary}`,
+        `Score: ${item.score}`,
+        `Confidence: ${item.confidence}%`,
+        "",
+      ]),
+    ];
+
+    const blob = new Blob([reportLines.join("\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${analysis.url.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_report.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
@@ -124,7 +166,7 @@ function App() {
     setAnalysis(null);
 
     if (!user) {
-      setError("Veuillez vous connecter pour lancer une analyse.");
+      setError("Please log in to run an analysis.");
       setLoading(false);
       return;
     }
@@ -146,7 +188,7 @@ function App() {
       setAnalysis(payload);
       await loadHistory();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue.");
+      setError(err instanceof Error ? err.message : "An error occurred.");
     } finally {
       setLoading(false);
     }
@@ -155,37 +197,42 @@ function App() {
   return (
     <div className="app-shell">
       <header>
-        <h1>URL Trust Analyzer</h1>
-        <p>Analyse rapide d’une URL et score de confiance.</p>
+        <div className="brand">
+          <img src={logo} alt="UTA Logo" className="brand-logo" />
+          <div>
+            <h1>URL Trust Analyzer</h1>
+            <p>Fast URL analysis and trust scoring.</p>
+          </div>
+        </div>
       </header>
 
       <main>
         {!user ? (
           <section className="result-card">
-            <h2>Connexion utilisateur</h2>
+            <h2>User Login</h2>
             <form onSubmit={handleAuthSubmit} className="search-form">
               <input
                 type="text"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                placeholder="Nom d'utilisateur"
+                placeholder="Username"
                 required
               />
               <input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Mot de passe"
+                placeholder="Password"
                 required
               />
               <button type="submit" disabled={loading}>
-                {loading ? "En cours…" : authMode === "login" ? "Se connecter" : "S'inscrire"}
+                {loading ? "Working..." : authMode === "login" ? "Login" : "Register"}
               </button>
             </form>
 
             <div className="provider-metrics">
               <button type="button" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}> 
-                {authMode === "login" ? "Créer un compte" : "Se connecter"}
+                {authMode === "login" ? "Create account" : "Switch to login"}
               </button>
             </div>
             {authError && <div className="toast error">{authError}</div>}
@@ -194,12 +241,12 @@ function App() {
           <section className="result-card">
             <div className="result-header">
               <div>
-                <p>Connecté en tant que</p>
+                <p>Signed in as</p>
                 <strong>{user}</strong>
               </div>
               <div>
                 <button type="button" onClick={handleLogout}>
-                  Se déconnecter
+                  Logout
                 </button>
               </div>
             </div>
@@ -225,23 +272,28 @@ function App() {
 
             {analysis && (
               <>
+                <div className="button-row">
+                  <button type="button" onClick={downloadReport} className="secondary-button">
+                    Create Report
+                  </button>
+                </div>
                 <div className="result-header">
                   <div>
-                    <p>URL analysée</p>
+                    <p>Analyzed URL</p>
                     <strong>{analysis.url}</strong>
                   </div>
                   <div>
-                    <p>Score global</p>
+                    <p>Overall score</p>
                     <strong>{analysis.overall_score} / 100</strong>
                   </div>
                   <div>
-                    <p>Confiance</p>
+                    <p>Confidence</p>
                     <strong>{analysis.confidence}%</strong>
                   </div>
                 </div>
 
                 <div className="analysis-reasons">
-                  <h2>Pourquoi ?</h2>
+                  <h2>Why?</h2>
                   <ul>
                     {analysis.reasons.map((reason) => (
                       <li key={reason}>{reason}</li>
@@ -250,7 +302,7 @@ function App() {
                 </div>
 
                 <div className="breakdown-card">
-                  <h2>Répartition du score</h2>
+                  <h2>Score Breakdown</h2>
                   <div className="breakdown-list">
                     {Object.entries(analysis.score_breakdown).map(([dimension, value]) => (
                       <div key={dimension} className="breakdown-item">
@@ -268,9 +320,8 @@ function App() {
                       <p>{item.summary}</p>
                       <div className="provider-metrics">
                         <span>Score: {item.score}</span>
-                        <span>Confiance: {item.confidence}%</span>
+                        <span>Confidence: {item.confidence}%</span>
                       </div>
-                      <pre>{JSON.stringify(item.details, null, 2)}</pre>
                     </article>
                   ))}
                 </div>
@@ -281,9 +332,9 @@ function App() {
 
         {user && (
           <section className="history-card">
-            <h2>Historique des analyses</h2>
+            <h2>Analysis history</h2>
             {history.length === 0 ? (
-              <p>Aucune analyse enregistrée pour le moment.</p>
+              <p>No saved analysis yet.</p>
             ) : (
               <ul className="history-list">
                 {history.map((item) => (
@@ -293,8 +344,8 @@ function App() {
                       <span>{new Date(item.created_at).toLocaleString()}</span>
                     </div>
                     <div>
-                      <span>Score : {item.overall_score}</span>
-                      <span>Confiance : {item.confidence}%</span>
+                      <span>Score: {item.overall_score}</span>
+                      <span>Confidence: {item.confidence}%</span>
                     </div>
                   </li>
                 ))}
