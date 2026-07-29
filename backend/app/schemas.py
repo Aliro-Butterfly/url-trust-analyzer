@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field, HttpUrl
 
 
@@ -22,3 +24,12 @@ class AnalysisResponse(BaseModel):
     reasons: list[str]
     score_breakdown: dict[str, int]
     results: list[ProviderResult]
+
+
+class HistoryItem(BaseModel):
+    id: int
+    url: str
+    overall_score: int
+    confidence: int
+    created_at: str
+    report: dict[str, Any]

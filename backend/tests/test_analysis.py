@@ -1,4 +1,6 @@
 import asyncio
+import os
+import tempfile
 
 from fastapi.testclient import TestClient
 
@@ -129,3 +131,44 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     assert len(payload["results"]) == 4
     assert "reasons" in payload
     assert isinstance(payload["reasons"], list)
+
+
+def test_history_endpoint_records_analysis(monkeypatch):
+    db_file = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    db_file.close()
+    monkeypatch.setenv("URL_TRUST_ANALYZER_DB", db_file.name)
+
+    async def fake_get(self, url, timeout=10.0):
+        if "rdap.org" in url:
+            return FakeResponse(
+                {
+                    "ldhName": "example.com",
+                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
+                }
+            )
+        if "dns.google" in url:
+            return FakeResponse(
+                {
+                    "Answer": [
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+                    ]
+                }
+            )
+        return FakeResponse({})
+
+    monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
+    monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
+
+    client = TestClient(app)
+    analyze_response = client.post("/analyze", json={"url": "https://example.com"})
+    assert analyze_response.status_code == 200
+
+    history_response = client.get("/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert isinstance(history, list)
+    assert len(history) == 1
+    assert history[0]["url"] == "https://example.com"
+    assert history[0]["report"]["overall_score"] == analyze_response.json()["overall_score"]
