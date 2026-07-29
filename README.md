@@ -58,6 +58,16 @@ Le frontend est déjà configuré pour proxyfier `/api` vers le backend.
 - `POST /analyze` : analyse une URL via plusieurs sources (RDAP, URL statique, DNS, et signaux de réputation)
 - `GET /history` : récupère les dernières analyses stockées en base
 
+## Authentification
+
+L'application utilise une authentification par cookie sécurisé HTTP-only.
+Les mots de passe sont stockés uniquement sous forme de hash sécurisé, sans conserver de données sensibles.
+
+- `POST /auth/register` : créer un compte utilisateur
+- `POST /auth/login` : se connecter
+- `POST /auth/logout` : se déconnecter
+- `GET /auth/me` : récupérer l'utilisateur connecté
+
 Exemple :
 
 ```bash

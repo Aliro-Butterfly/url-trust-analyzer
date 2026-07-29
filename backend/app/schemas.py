@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, constr
 
 
 class AnalyzeRequest(BaseModel):
@@ -33,3 +33,12 @@ class HistoryItem(BaseModel):
     confidence: int
     created_at: str
     report: dict[str, Any]
+
+
+class UserCreate(BaseModel):
+    username: constr(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9._-]+$")
+    password: constr(min_length=8)
+
+
+class AuthResponse(BaseModel):
+    username: str

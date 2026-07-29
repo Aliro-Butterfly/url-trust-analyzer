@@ -37,6 +37,16 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         connection.commit()
 
 
@@ -54,6 +64,26 @@ def save_analysis(report: dict[str, Any]) -> None:
             ),
         )
         connection.commit()
+
+
+def create_user(username: str, password_hash: str) -> None:
+    initialize_database()
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username, password_hash, datetime.now(timezone.utc).isoformat()),
+        )
+        connection.commit()
+
+
+def get_user_by_username(username: str) -> dict[str, Any] | None:
+    initialize_database()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def fetch_history(limit: int = 20) -> list[dict[str, Any]]:

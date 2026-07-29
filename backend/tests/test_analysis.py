@@ -23,6 +23,19 @@ class FakeResponse:
             raise RuntimeError("request failed")
 
 
+def create_temporary_db(monkeypatch):
+    db_file = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    db_file.close()
+    monkeypatch.setenv("URL_TRUST_ANALYZER_DB", db_file.name)
+    return db_file.name
+
+
+def register_test_user(client):
+    response = client.post("/auth/register", json={"username": "testuser", "password": "password123"})
+    assert response.status_code == 200
+    return response.json()["username"]
+
+
 def test_health_endpoint_returns_ok():
     client = TestClient(app)
     response = client.get("/health")
@@ -122,6 +135,7 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
 
     client = TestClient(app)
+    register_test_user(client)
     response = client.post("/analyze", json={"url": "https://example.com"})
 
     assert response.status_code == 200
@@ -162,6 +176,7 @@ def test_history_endpoint_records_analysis(monkeypatch):
     monkeypatch.setattr("backend.app.providers.dns_provider.httpx.AsyncClient.get", fake_get)
 
     client = TestClient(app)
+    register_test_user(client)
     analyze_response = client.post("/analyze", json={"url": "https://example.com"})
     assert analyze_response.status_code == 200
 
@@ -172,3 +187,13 @@ def test_history_endpoint_records_analysis(monkeypatch):
     assert len(history) == 1
     assert history[0]["url"] == "https://example.com"
     assert history[0]["report"]["overall_score"] == analyze_response.json()["overall_score"]
+
+
+def test_protected_endpoints_require_auth():
+    client = TestClient(app)
+
+    analyze_response = client.post("/analyze", json={"url": "https://example.com"})
+    assert analyze_response.status_code == 401
+
+    history_response = client.get("/history")
+    assert history_response.status_code == 401
