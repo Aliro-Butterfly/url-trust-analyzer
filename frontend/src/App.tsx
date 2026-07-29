@@ -14,6 +14,7 @@ interface AnalysisResponse {
   overall_score: number;
   confidence: number;
   reasons: string[];
+  score_breakdown: Record<string, number>;
   results: ProviderResult[];
 }
 
@@ -23,7 +24,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
     setError(null);
@@ -96,6 +97,18 @@ function App() {
                   <li key={reason}>{reason}</li>
                 ))}
               </ul>
+            </div>
+
+            <div className="breakdown-card">
+              <h2>Répartition du score</h2>
+              <div className="breakdown-list">
+                {Object.entries(analysis.score_breakdown).map(([dimension, value]) => (
+                  <div key={dimension} className="breakdown-item">
+                    <span>{dimension}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="provider-list">

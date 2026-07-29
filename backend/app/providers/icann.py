@@ -43,12 +43,12 @@ class IcannProvider:
                 break
 
         if registration_date:
-            score = self._score_from_age(registration_date)
+            age_score = self._score_from_age(registration_date)
             summary = "The domain is publicly registered and appears mature."
             confidence = 84
             details = {"domain": domain, "registration_date": registration_date}
         else:
-            score = 62
+            age_score = 62
             summary = "The domain was returned by RDAP, but no registration date was exposed."
             confidence = 60
             details = {"domain": domain, "registration_date": None}
@@ -56,10 +56,13 @@ class IcannProvider:
         return {
             "provider": self.name,
             "status": "success",
-            "score": score,
+            "score": age_score,
             "confidence": confidence,
             "summary": summary,
             "details": details,
+            "dimensions": {
+                "age": age_score,
+            },
         }
 
     @staticmethod

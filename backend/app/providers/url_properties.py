@@ -25,19 +25,18 @@ class UrlPropertiesProvider(Provider):
         host = parsed.host or ""
         path = parsed.path
 
-        score = 90 if scheme == "https" else 40
+        https_score = 100 if scheme == "https" else 20
+        infrastructure_score = 90 if len(host) <= 20 else 65
+        score = round((https_score + infrastructure_score) / 2)
         confidence = 88
-        reasons = []
+        notes = []
 
         if scheme != "https":
-            reasons.append("HTTPS is not used.")
+            notes.append("HTTPS is not used.")
         if len(host) > 20:
-            score -= 10
-            reasons.append("The hostname is long, which may reduce trust.")
+            notes.append("The hostname is long, which can reduce trust.")
         if len(host) <= 20 and scheme == "https":
-            reasons.append("The URL has a secure scheme and a short hostname.")
-
-        score = max(25, min(95, score))
+            notes.append("The URL has a secure scheme and a short hostname.")
 
         return {
             "provider": self.name,
@@ -45,5 +44,9 @@ class UrlPropertiesProvider(Provider):
             "score": score,
             "confidence": confidence,
             "summary": "Static URL inspection completed.",
-            "details": {"scheme": scheme, "host": host, "path": path, "notes": reasons},
+            "details": {"scheme": scheme, "host": host, "path": path, "notes": notes},
+            "dimensions": {
+                "https": https_score,
+                "infrastructure": infrastructure_score,
+            },
         }

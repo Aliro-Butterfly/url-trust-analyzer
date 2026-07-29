@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class AnalyzeRequest(BaseModel):
@@ -12,6 +12,7 @@ class ProviderResult(BaseModel):
     confidence: int
     summary: str
     details: dict
+    dimensions: dict[str, int] = Field(default_factory=dict)
 
 
 class AnalysisResponse(BaseModel):
@@ -19,4 +20,5 @@ class AnalysisResponse(BaseModel):
     overall_score: int
     confidence: int
     reasons: list[str]
+    score_breakdown: dict[str, int]
     results: list[ProviderResult]

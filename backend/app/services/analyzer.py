@@ -1,5 +1,6 @@
 from ..providers import IcannProvider, UrlPropertiesProvider
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
+from ..scoring.scorer import build_trust_reasons, compute_dimension_scores, compute_overall_score
 
 
 class AnalyzerService:
@@ -22,43 +23,22 @@ class AnalyzerService:
                     confidence=result["confidence"],
                     summary=result["summary"],
                     details=result["details"],
+                    dimensions=result.get("dimensions", {}),
                 )
             )
             scores.append(result["score"])
             confidences.append(result["confidence"])
 
-        overall_score = round(sum(scores) / len(scores)) if scores else 0
+        score_breakdown = compute_dimension_scores(provider_results)
+        overall_score = compute_overall_score(score_breakdown)
         average_confidence = round(sum(confidences) / len(confidences)) if confidences else 0
-        reasons = self._build_reasons(provider_results)
+        reasons = build_trust_reasons(provider_results, score_breakdown)
 
         return AnalysisResponse(
             url=normalized_url,
             overall_score=overall_score,
             confidence=average_confidence,
             reasons=reasons,
+            score_breakdown=score_breakdown,
             results=provider_results,
         )
-
-    @staticmethod
-    def _build_reasons(provider_results: list[ProviderResult]) -> list[str]:
-        reasons: list[str] = []
-        errors = [result.provider for result in provider_results if result.status != "success"]
-
-        if errors:
-            reasons.append("Some providers returned incomplete data.")
-
-        https_provider = next((result for result in provider_results if result.provider == "URL Properties"), None)
-        if https_provider:
-            scheme = https_provider.details.get("scheme")
-            if scheme != "https":
-                reasons.append("The URL is not served over HTTPS.")
-            else:
-                reasons.append("The URL uses HTTPS.")
-
-        if len(provider_results) > 1:
-            reasons.append(f"{len(provider_results)} sources were used for this analysis.")
-
-        if not reasons:
-            reasons.append("The analysis completed successfully.")
-
-        return reasons
