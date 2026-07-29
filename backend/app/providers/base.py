@@ -6,7 +6,8 @@ from typing import Any
 
 class Provider(ABC):
     name: str
+    api_key_name: str | None = None
 
     @abstractmethod
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         raise NotImplementedError()

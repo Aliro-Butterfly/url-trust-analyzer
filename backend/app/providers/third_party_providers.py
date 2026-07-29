@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import urllib.parse
 from typing import Any
 
@@ -43,41 +42,52 @@ def _score_from_page(content: str, positive: list[str], negative: list[str]) -> 
     return 60, "The scraped page did not contain a clear verdict."
 
 
+def _clamp(value: int) -> int:
+    return max(0, min(100, value))
+
+
 class VirusTotalProvider(Provider):
     name = "VirusTotal"
+    api_key_name = "VIRUSTOTAL"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
-        api_key = os.getenv("VIRUSTOTAL_API_KEY")
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
+        api_key = api_key or os.getenv("VIRUSTOTAL_API_KEY") or os.getenv("VT_API_KEY")
         entity = urllib.parse.quote(url, safe="")
 
         if api_key:
             try:
-                async with httpx.AsyncClient(timeout=15.0, headers={"x-apikey": api_key}) as client:
-                    response = await client.post(
+                async with httpx.AsyncClient(timeout=20.0, headers={"x-apikey": api_key}) as client:
+                    create_response = await client.post(
                         "https://www.virustotal.com/api/v3/urls",
                         data={"url": url},
                     )
-                    response.raise_for_status()
-                    payload = response.json()
-                    stats = payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
-                    positives = stats.get("malicious", 0) + stats.get("suspicious", 0)
-                    total = sum(stats.values())
-                    score = _clamp(100 - positives * 15)
-                    summary = f"VirusTotal scan results were fetched from the API with {positives} flagged engines."
-                    confidence = 90 if total > 0 else 60
-                    return {
-                        "provider": self.name,
-                        "status": "success",
-                        "score": score,
-                        "confidence": confidence,
-                        "summary": summary,
-                        "details": {
-                            "positives": positives,
-                            "total_scanners": total,
-                            "analysis_stats": stats,
-                        },
-                        "dimensions": {"threat_intel": score},
-                    }
+                    create_response.raise_for_status()
+                    create_payload = create_response.json()
+                    resource_id = create_payload.get("data", {}).get("id")
+
+                    if resource_id:
+                        report_response = await client.get(f"https://www.virustotal.com/api/v3/urls/{resource_id}")
+                        report_response.raise_for_status()
+                        payload = report_response.json()
+                        stats = payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                        positives = stats.get("malicious", 0) + stats.get("suspicious", 0)
+                        total = sum(stats.values())
+                        score = _clamp(100 - positives * 15)
+                        summary = f"VirusTotal scan results were fetched from the API with {positives} flagged engines."
+                        confidence = 90 if total > 0 else 60
+                        return {
+                            "provider": self.name,
+                            "status": "success",
+                            "score": score,
+                            "confidence": confidence,
+                            "summary": summary,
+                            "details": {
+                                "positives": positives,
+                                "total_scanners": total,
+                                "analysis_stats": stats,
+                            },
+                            "dimensions": {"threat_intel": score},
+                        }
             except Exception:
                 pass
 
@@ -96,7 +106,7 @@ class VirusTotalProvider(Provider):
         score, note = _score_from_page(
             page,
             positive=["no threats detected", "harmless", "clean site", "detected by 0"],
-            negative=["malicious", "phishing", "suspicious", "unsafe", "threat"]
+            negative=["malicious", "phishing", "suspicious", "unsafe", "threat"],
         )
         return {
             "provider": self.name,
@@ -111,8 +121,59 @@ class VirusTotalProvider(Provider):
 
 class GoogleSafeBrowsingProvider(Provider):
     name = "Google Safe Browsing"
+    api_key_name = "GOOGLE_SAFEBROWSING"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
+        api_key = api_key or os.getenv("GOOGLE_SAFEBROWSING_API_KEY")
+        if api_key:
+            try:
+                body = {
+                    "client": {
+                        "clientId": "url-trust-analyzer",
+                        "clientVersion": "1.0",
+                    },
+                    "threatInfo": {
+                        "threatTypes": [
+                            "MALWARE",
+                            "SOCIAL_ENGINEERING",
+                            "UNWANTED_SOFTWARE",
+                            "POTENTIALLY_HARMFUL_APPLICATION",
+                        ],
+                        "platformTypes": ["ANY_PLATFORM"],
+                        "threatEntryTypes": ["URL"],
+                        "threatEntries": [{"url": url}],
+                    },
+                }
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    response = await client.post(
+                        f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={api_key}",
+                        json=body,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    matches = payload.get("matches")
+                    if matches:
+                        return {
+                            "provider": self.name,
+                            "status": "success",
+                            "score": 18,
+                            "confidence": 90,
+                            "summary": "Google Safe Browsing reported a threat for this URL.",
+                            "details": {"matches": matches},
+                            "dimensions": {"threat_intel": 18},
+                        }
+                    return {
+                        "provider": self.name,
+                        "status": "success",
+                        "score": 92,
+                        "confidence": 90,
+                        "summary": "Google Safe Browsing did not detect a known threat for this URL.",
+                        "details": {"matches": []},
+                        "dimensions": {"threat_intel": 92},
+                    }
+            except Exception:
+                pass
+
         page = await _fetch_text(
             f"https://transparencyreport.google.com/safe-browsing/search?url={urllib.parse.quote(url, safe='')}",
             timeout=15.0,
@@ -144,10 +205,83 @@ class GoogleSafeBrowsingProvider(Provider):
         }
 
 
+class URLScanProvider(Provider):
+    name = "URLScan"
+    api_key_name = "URLSCAN"
+
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
+        domain = _extract_domain(url)
+        if not domain:
+            return {
+                "provider": self.name,
+                "status": "error",
+                "score": 50,
+                "confidence": 25,
+                "summary": "The URL is invalid.",
+                "details": {"url": url},
+                "dimensions": {"threat_intel": 50},
+            }
+
+        api_key = os.getenv("URLSCAN_API_KEY")
+        if api_key:
+            try:
+                async with httpx.AsyncClient(timeout=20.0, headers={"API-Key": api_key}) as client:
+                    response = await client.get(
+                        f"https://urlscan.io/api/v1/search/?q=domain:{urllib.parse.quote(domain)}&size=1"
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    results = payload.get("results", [])
+                    if results:
+                        verdicts = results[0].get("verdicts", {})
+                        overall = verdicts.get("overall")
+                        score = 90 if overall == "clean" else 20 if overall == "malicious" else 65
+                        return {
+                            "provider": self.name,
+                            "status": "success",
+                            "score": score,
+                            "confidence": 75,
+                            "summary": "URLScan results were retrieved from the API.",
+                            "details": {"verdicts": verdicts},
+                            "dimensions": {"threat_intel": score},
+                        }
+            except Exception:
+                pass
+
+        page = await _fetch_text(f"https://urlscan.io/domain/{urllib.parse.quote(domain)}")
+        if not page:
+            return {
+                "provider": self.name,
+                "status": "error",
+                "score": 56,
+                "confidence": 35,
+                "summary": "URLScan lookup did not return usable data.",
+                "details": {"domain": domain},
+                "dimensions": {"threat_intel": 56},
+            }
+
+        if "no results" in page.lower() or "no scans" in page.lower():
+            score = 78
+            note = "URLScan has no public scans for this domain yet."
+        else:
+            score = 68
+            note = "URLScan public scan results were found for this domain."
+
+        return {
+            "provider": self.name,
+            "status": "success",
+            "score": score,
+            "confidence": 68,
+            "summary": "URLScan reputation was estimated from public scan data.",
+            "details": {"domain": domain, "note": note},
+            "dimensions": {"threat_intel": score},
+        }
+
+
 class UrlVoidProvider(Provider):
     name = "URLVoid"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         domain = _extract_domain(url)
         if not domain:
             return {
@@ -191,7 +325,7 @@ class UrlVoidProvider(Provider):
 class SucuriProvider(Provider):
     name = "Sucuri"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         domain = _extract_domain(url)
         if not domain:
             return {
@@ -235,7 +369,7 @@ class SucuriProvider(Provider):
 class TalosProvider(Provider):
     name = "Cisco Talos"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         domain = _extract_domain(url)
         if not domain:
             return {
@@ -282,7 +416,7 @@ class TalosProvider(Provider):
 class ScamDocProvider(Provider):
     name = "ScamDoc"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         page = await _fetch_text(f"https://www.scamdoc.com/check?url={urllib.parse.quote(url, safe='')}" )
         if not page:
             return {

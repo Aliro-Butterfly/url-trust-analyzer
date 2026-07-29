@@ -6,6 +6,7 @@ from ..providers import (
     ScamDocProvider,
     SucuriProvider,
     TalosProvider,
+    URLScanProvider,
     UrlPropertiesProvider,
     UrlVoidProvider,
     VirusTotalProvider,
@@ -27,16 +28,26 @@ class AnalyzerService:
             TalosProvider(),
             GoogleSafeBrowsingProvider(),
             ScamDocProvider(),
+            URLScanProvider(),
         ]
 
-    async def analyze(self, request: AnalyzeRequest) -> AnalysisResponse:
+    async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
         provider_results = []
         scores = []
         confidences = []
         normalized_url = str(request.url).rstrip("/")
 
         for provider in self.providers:
-            result = await provider.analyze(normalized_url)
+            provider_api_key = None
+            provider_api_name = getattr(provider, "api_key_name", None)
+            if provider_api_name and api_keys:
+                provider_api_key = api_keys.get(provider_api_name)
+
+            try:
+                result = await provider.analyze(normalized_url, provider_api_key)
+            except TypeError:
+                result = await provider.analyze(normalized_url)
+
             provider_results.append(
                 ProviderResult(
                     provider=result["provider"],

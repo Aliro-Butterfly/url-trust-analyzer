@@ -144,10 +144,11 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 50
-    assert len(payload["results"]) == 10
+    assert len(payload["results"]) == 11
     assert any(result["provider"] == "VirusTotal" for result in payload["results"])
     assert any(result["provider"] == "Google Safe Browsing" for result in payload["results"])
     assert any(result["provider"] == "Cisco Talos" for result in payload["results"])
+    assert any(result["provider"] == "URLScan" for result in payload["results"])
     assert "reasons" in payload
     assert isinstance(payload["reasons"], list)
 
@@ -202,6 +203,44 @@ def test_protected_endpoints_require_auth():
 
     history_response = client.get("/history")
     assert history_response.status_code == 401
+
+
+def test_api_key_endpoints_are_user_scoped():
+    client = TestClient(app)
+    username = register_test_user(client)
+
+    response = client.get("/auth/api-keys")
+    assert response.status_code == 200
+    assert response.json() == {
+        "has_urlscan": False,
+        "has_google_safebrowsing": False,
+        "has_virustotal": False,
+    }
+
+    update_response = client.put(
+        "/auth/api-keys",
+        json={
+            "urlscan": "test-urlscan-key",
+            "google_safebrowsing": "test-google-key",
+            "virustotal": "test-vt-key",
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json() == {
+        "has_urlscan": True,
+        "has_google_safebrowsing": True,
+        "has_virustotal": True,
+    }
+
+    second_client = TestClient(app)
+    register_test_user(second_client)
+    second_keys_response = second_client.get("/auth/api-keys")
+    assert second_keys_response.status_code == 200
+    assert second_keys_response.json() == {
+        "has_urlscan": False,
+        "has_google_safebrowsing": False,
+        "has_virustotal": False,
+    }
 
 
 def test_history_is_scoped_per_user(monkeypatch):

@@ -7,12 +7,22 @@ from fastapi.responses import JSONResponse
 from .auth import AUTH_COOKIE_NAME, create_access_token, decode_access_token, hash_password, verify_password
 from .database import (
     create_user,
+    fetch_api_keys,
     fetch_history,
     get_user_by_username,
     initialize_database,
     save_analysis,
+    save_api_key,
 )
-from .schemas import AnalysisResponse, AnalyzeRequest, AuthResponse, HistoryItem, UserCreate
+from .schemas import (
+    AnalysisResponse,
+    AnalyzeRequest,
+    ApiKeysStatus,
+    ApiKeysUpdate,
+    AuthResponse,
+    HistoryItem,
+    UserCreate,
+)
 from .services.analyzer import AnalyzerService
 
 
@@ -109,14 +119,35 @@ def me(current_user: dict[str, Any] = Depends(get_current_user)) -> AuthResponse
 async def analyze(
     request: AnalyzeRequest, current_user: dict[str, Any] = Depends(get_current_user)
 ) -> AnalysisResponse:
-    result = await analyzer_service.analyze(request)
-    save_analysis(result.model_dump())
+    api_keys = fetch_api_keys(current_user["username"])
+    result = await analyzer_service.analyze(request, api_keys=api_keys)
+    save_analysis(result.model_dump(), current_user["username"])
     return result
+
+
+@app.get("/auth/api-keys", response_model=ApiKeysStatus)
+def get_api_keys(current_user: dict[str, Any] = Depends(get_current_user)) -> ApiKeysStatus:
+    api_keys = fetch_api_keys(current_user["username"])
+    return ApiKeysStatus(
+        has_urlscan=bool(api_keys.get("URLSCAN")),
+        has_google_safebrowsing=bool(api_keys.get("GOOGLE_SAFEBROWSING")),
+        has_virustotal=bool(api_keys.get("VIRUSTOTAL")),
+    )
+
+
+@app.put("/auth/api-keys", response_model=ApiKeysStatus)
+def update_api_keys(
+    update: ApiKeysUpdate, current_user: dict[str, Any] = Depends(get_current_user)
+) -> ApiKeysStatus:
+    save_api_key(current_user["username"], "URLSCAN", update.urlscan)
+    save_api_key(current_user["username"], "GOOGLE_SAFEBROWSING", update.google_safebrowsing)
+    save_api_key(current_user["username"], "VIRUSTOTAL", update.virustotal)
+    return get_api_keys(current_user)
 
 
 @app.get("/history", response_model=list[HistoryItem])
 def history(current_user: dict[str, Any] = Depends(get_current_user)) -> list[HistoryItem]:
-    return fetch_history()
+    return fetch_history(username=current_user["username"])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from .third_party_providers import (
     ScamDocProvider,
     SucuriProvider,
     TalosProvider,
+    URLScanProvider,
     UrlVoidProvider,
     VirusTotalProvider,
 )
@@ -22,4 +23,5 @@ __all__ = [
     "TalosProvider",
     "GoogleSafeBrowsingProvider",
     "ScamDocProvider",
+    "URLScanProvider",
 ]

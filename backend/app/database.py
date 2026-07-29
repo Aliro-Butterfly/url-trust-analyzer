@@ -23,12 +23,16 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+from .crypto import decrypt_api_key, encrypt_api_key
+
+
 def initialize_database() -> None:
     with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
                 url TEXT NOT NULL,
                 overall_score INTEGER NOT NULL,
                 confidence INTEGER NOT NULL,
@@ -47,15 +51,39 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                encrypted_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, provider)
+            )
+            """
+        )
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(history)").fetchall()]
+        if "user_id" not in columns:
+            connection.execute("ALTER TABLE history ADD COLUMN user_id INTEGER")
         connection.commit()
 
 
-def save_analysis(report: dict[str, Any]) -> None:
+def save_analysis(report: dict[str, Any], username: str) -> None:
     initialize_database()
     with get_connection() as connection:
+        user_row = connection.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        if not user_row:
+            return
+
         connection.execute(
-            "INSERT INTO history (url, overall_score, confidence, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO history (user_id, url, overall_score, confidence, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (
+                user_row["id"],
                 report["url"],
                 report["overall_score"],
                 report["confidence"],
@@ -86,13 +114,73 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def fetch_history(limit: int = 20) -> list[dict[str, Any]]:
+def save_api_key(username: str, provider: str, api_key: str | None) -> None:
     initialize_database()
+    user_row = get_user_by_username(username)
+    if not user_row:
+        return
+
+    with get_connection() as connection:
+        if not api_key:
+            connection.execute(
+                "DELETE FROM api_keys WHERE user_id = ? AND provider = ?",
+                (user_row["id"], provider),
+            )
+        else:
+            encrypted_value = encrypt_api_key(api_key)
+            connection.execute(
+                "INSERT INTO api_keys (user_id, provider, encrypted_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(user_id, provider) DO UPDATE SET encrypted_key = excluded.encrypted_key, updated_at = excluded.updated_at",
+                (
+                    user_row["id"],
+                    provider,
+                    encrypted_value,
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        connection.commit()
+
+
+def fetch_api_keys(username: str) -> dict[str, str]:
+    initialize_database()
+    user_row = get_user_by_username(username)
+    if not user_row:
+        return {}
+
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT id, url, overall_score, confidence, payload, created_at FROM history ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?",
+            (user_row["id"],),
         ).fetchall()
+
+    api_keys: dict[str, str] = {}
+    for row in rows:
+        decrypted = decrypt_api_key(row["encrypted_key"])
+        if decrypted is not None:
+            api_keys[row["provider"] ] = decrypted
+    return api_keys
+
+
+def fetch_history(limit: int = 20, username: str | None = None) -> list[dict[str, Any]]:
+    initialize_database()
+    with get_connection() as connection:
+        if username:
+            user_row = connection.execute(
+                "SELECT id FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if not user_row:
+                return []
+            rows = connection.execute(
+                "SELECT id, url, overall_score, confidence, payload, created_at FROM history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_row["id"], limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT id, url, overall_score, confidence, payload, created_at FROM history ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
 
         history: list[dict[str, Any]] = []
         for row in rows:

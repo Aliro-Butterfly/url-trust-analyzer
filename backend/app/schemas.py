@@ -42,3 +42,15 @@ class UserCreate(BaseModel):
 
 class AuthResponse(BaseModel):
     username: str
+
+
+class ApiKeysUpdate(BaseModel):
+    urlscan: str | None = None
+    google_safebrowsing: str | None = None
+    virustotal: str | None = None
+
+
+class ApiKeysStatus(BaseModel):
+    has_urlscan: bool
+    has_google_safebrowsing: bool
+    has_virustotal: bool

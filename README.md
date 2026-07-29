@@ -19,7 +19,7 @@ python -m pip install -r requirements.txt
 
 ```bash
 cd backend
-uvicorn backend.app.main:app --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Le backend écoute sur : http://127.0.0.1:8000
@@ -35,10 +35,24 @@ npm install
 
 ```bash
 cd frontend
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
 Le frontend écoute sur : http://127.0.0.1:5173 et proxifie les requêtes `/api` vers le backend.
+
+## Démarrage rapide local
+
+Sur Windows, vous pouvez démarrer les deux services d’un seul coup :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+
+Pour arrêter les processus de développement :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop.ps1
+```
 
 Le tableau de bord affiche maintenant l’historique des analyses effectuées.
 

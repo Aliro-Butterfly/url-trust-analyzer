@@ -43,6 +43,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState({
+    has_urlscan: false,
+    has_google_safebrowsing: false,
+    has_virustotal: false,
+  });
+  const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
+  const [urlscanKey, setUrlscanKey] = useState("");
+  const [googleSafeBrowsingKey, setGoogleSafeBrowsingKey] = useState("");
+  const [virusTotalKey, setVirusTotalKey] = useState("");
 
   const loadUser = async () => {
     try {
@@ -73,10 +83,31 @@ function App() {
     }
   };
 
+  const loadApiKeys = async () => {
+    setApiKeyMessage(null);
+    try {
+      const response = await fetch("/api/auth/api-keys", { credentials: "include" });
+      if (!response.ok) {
+        setApiKeyStatus({ has_urlscan: false, has_google_safebrowsing: false, has_virustotal: false });
+        return;
+      }
+      const payload = await response.json();
+      setApiKeyStatus(payload);
+    } catch (err) {
+      console.warn("Unable to load API key status", err);
+    }
+  };
+
   useEffect(() => {
     loadUser();
     loadHistory();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      loadApiKeys();
+    }
+  }, [user]);
 
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -157,6 +188,41 @@ function App() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  };
+
+  const handleApiKeysSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setApiKeyLoading(true);
+    setApiKeyMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/api-keys", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          urlscan: urlscanKey || undefined,
+          google_safebrowsing: googleSafeBrowsingKey || undefined,
+          virustotal: virusTotalKey || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || `HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      setApiKeyStatus(payload);
+      setUrlscanKey("");
+      setGoogleSafeBrowsingKey("");
+      setVirusTotalKey("");
+      setApiKeyMessage("API keys updated successfully. Only you can use these keys.");
+    } catch (err) {
+      setApiKeyMessage(err instanceof Error ? err.message : "Unable to update API keys.");
+    } finally {
+      setApiKeyLoading(false);
+    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -251,7 +317,34 @@ function App() {
               </div>
             </div>
           </section>
-        )}
+          <section className="result-card">
+            <h2>API Keys</h2>
+            <p className="subtext">Store your provider API keys securely for your account. Only you can use these keys.</p>
+            <form onSubmit={handleApiKeysSubmit} className="search-form">
+              <input
+                type="password"
+                value={urlscanKey}
+                onChange={(event) => setUrlscanKey(event.target.value)}
+                placeholder={apiKeyStatus.has_urlscan ? "URLScan key stored — enter new to replace" : "URLScan API key"}
+              />
+              <input
+                type="password"
+                value={googleSafeBrowsingKey}
+                onChange={(event) => setGoogleSafeBrowsingKey(event.target.value)}
+                placeholder={apiKeyStatus.has_google_safebrowsing ? "Google Safe Browsing key stored — enter new to replace" : "Google Safe Browsing API key"}
+              />
+              <input
+                type="password"
+                value={virusTotalKey}
+                onChange={(event) => setVirusTotalKey(event.target.value)}
+                placeholder={apiKeyStatus.has_virustotal ? "VirusTotal key stored — enter new to replace" : "VirusTotal API key"}
+              />
+              <button type="submit" disabled={apiKeyLoading}>
+                {apiKeyLoading ? "Saving..." : "Save API Keys"}
+              </button>
+            </form>
+            {apiKeyMessage && <div className="toast success">{apiKeyMessage}</div>}
+          </section>        )}
 
         {user && (
           <section className="result-card">
