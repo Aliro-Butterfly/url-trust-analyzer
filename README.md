@@ -40,6 +40,17 @@ npm run dev
 
 Le frontend écoute sur : http://127.0.0.1:5173 et proxifie les requêtes `/api` vers le backend.
 
+## Exécution avec Docker Compose
+
+```bash
+docker compose up --build
+```
+
+- backend : http://127.0.0.1:8000
+- frontend : http://127.0.0.1:5173
+
+Le frontend est déjà configuré pour proxyfier `/api` vers le backend.
+
 ## Endpoint d'analyse
 
 - `POST /analyze` : analyse une URL via ICANN/RDAP
