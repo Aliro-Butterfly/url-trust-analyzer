@@ -410,7 +410,7 @@ function App() {
                 required
               />
               <button type="submit" disabled={loading}>
-                {loading ? "Analyse en cours…" : "Analyser"}
+                {loading ? "Analysing..." : "Analyse"}
               </button>
             </form>
 
