@@ -206,7 +206,7 @@ class AdminLoginRequest:
 @dataclass
 class AdminConfigUpdate:
     dimension_weights: dict[str, int] | None = None
-    provider_coefficients: dict[str, float] | None = None
+    providers: dict[str, dict] | None = None
 
 
 @app.post("/admin/login")
@@ -236,7 +236,7 @@ def admin_get_config(_=Depends(require_admin)):
 def admin_update_config(body: AdminConfigUpdate, _=Depends(require_admin)):
     return update_config(
         dimension_weights=body.dimension_weights,
-        provider_coefficients=body.provider_coefficients,
+        providers=body.providers,
     )
 
 

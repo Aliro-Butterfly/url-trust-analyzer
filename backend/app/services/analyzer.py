@@ -17,7 +17,7 @@ from ..providers import (
     VirusTotalProvider,
 )
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
-from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_overall_score
+from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_global_confidence, compute_overall_score
 
 
 class AnalyzerService:
@@ -71,10 +71,7 @@ class AnalyzerService:
         successful = [pr for pr in provider_results if pr.status == "success"]
         score_breakdown = compute_category_scores(successful)
         overall_score = compute_overall_score(score_breakdown)
-        average_confidence = (
-            round(sum(pr.confidence for pr in successful) / len(successful))
-            if successful else 0
-        )
+        average_confidence = compute_global_confidence(successful)
         reasons = build_trust_reasons(provider_results, score_breakdown, successful)
 
         return AnalysisResponse(

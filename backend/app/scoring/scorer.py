@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable, Sequence
+from typing import Sequence
 
-from ..admin_config import get_dimension_weights, get_provider_coefficients
+from ..admin_config import get_dimension_weights, get_provider_coefficient, get_provider_dimensions
 from ..schemas import ProviderResult
 
 
 def compute_category_scores(successful: Sequence[ProviderResult]) -> dict[str, int]:
     weights = get_dimension_weights()
-    coefficients = get_provider_coefficients()
     category_data: dict[str, list[tuple[int, float]]] = defaultdict(list)
 
     for provider in successful:
-        coefficient = coefficients.get(provider.provider, 1.0)
-        effective_weight = coefficient * (provider.confidence / 100.0)
+        coefficient = get_provider_coefficient(provider.provider)
+        coverage_map = get_provider_dimensions(provider.provider)
 
         for dimension, value in provider.dimensions.items():
-            if dimension in weights:
-                category_data[dimension].append((value, effective_weight))
+            if dimension not in weights:
+                continue
+            coverage = coverage_map.get(dimension, 50)
+            effective_weight = coefficient * (provider.confidence / 100.0) * (coverage / 100.0)
+            category_data[dimension].append((value, effective_weight))
 
     scores = {}
     for category, values in category_data.items():
@@ -37,6 +39,23 @@ def compute_overall_score(score_breakdown: dict[str, int]) -> int:
 
     weighted_total = sum(score_breakdown[dim] * weights[dim] for dim in score_breakdown)
     return round(weighted_total / available_weight)
+
+
+def compute_global_confidence(successful: Sequence[ProviderResult]) -> int:
+    total_weighted_conf = 0.0
+    total_weight = 0.0
+
+    for provider in successful:
+        coefficient = get_provider_coefficient(provider.provider)
+        coverage_map = get_provider_dimensions(provider.provider)
+        avg_coverage = sum(coverage_map.values()) / len(coverage_map) if coverage_map else 50
+        effective_weight = coefficient * (avg_coverage / 100.0)
+        total_weighted_conf += provider.confidence * effective_weight
+        total_weight += effective_weight
+
+    if total_weight == 0:
+        return 0
+    return round(total_weighted_conf / total_weight)
 
 
 def build_trust_reasons(

@@ -35,7 +35,7 @@ interface AuthResponse {
 
 interface AdminConfig {
   dimension_weights: Record<string, number>;
-  provider_coefficients: Record<string, number>;
+  providers: Record<string, { coefficient: number; dimensions: Record<string, number> }>;
 }
 
 function formatDetail(value: unknown): string {
@@ -332,7 +332,7 @@ function App() {
         credentials: "include",
         body: JSON.stringify({
           dimension_weights: adminConfig.dimension_weights,
-          provider_coefficients: adminConfig.provider_coefficients,
+          providers: adminConfig.providers,
         }),
       });
       if (!response.ok) {
@@ -462,20 +462,43 @@ function App() {
                       </div>
                     ))}
                   </div>
-                  <h3>Provider Coefficients</h3>
-                  <p className="subtext">Relative importance of each provider (higher = more influence).</p>
-                  <div className="breakdown-list">
-                    {Object.entries(adminConfig.provider_coefficients).map(([key, val]) => (
-                      <div key={key} className="breakdown-item">
-                        <span>{key}</span>
-                        <input type="number" step="0.1" min="0" max="10" value={val}
-                          onChange={(e) => setAdminConfig({
-                            ...adminConfig,
-                            provider_coefficients: { ...adminConfig.provider_coefficients, [key]: Number(e.target.value) },
-                          })} style={{ width: "70px" }} />
-                      </div>
+
+                  <h3>Providers</h3>
+                  <p className="subtext">Coefficient + coverage per dimension (0–100) for each provider.</p>
+                  <div className="provider-list" style={{ marginTop: "0.5rem" }}>
+                    {Object.entries(adminConfig.providers).map(([name, prov]) => (
+                      <article key={name} className="provider-card" style={{ padding: "0.75rem" }}>
+                        <div className="provider-card-header">
+                          <h2 style={{ fontSize: "1rem" }}>{name}</h2>
+                        </div>
+                        <div className="breakdown-item" style={{ marginBottom: "0.4rem" }}>
+                          <span style={{ fontWeight: 600 }}>Coefficient</span>
+                          <input type="number" step="0.1" min="0" max="10" value={prov.coefficient}
+                            onChange={(e) => {
+                              const updated = { ...adminConfig.providers, [name]: { ...prov, coefficient: Number(e.target.value) } };
+                              setAdminConfig({ ...adminConfig, providers: updated });
+                            }} style={{ width: "70px" }} />
+                        </div>
+                        <div className="breakdown-list">
+                          {Object.entries(prov.dimensions).map(([dim, cov]) => (
+                            <div key={dim} className="breakdown-item">
+                              <span>{dim}</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                                <span style={{ fontSize: "0.75rem", color: "#888" }}>cov</span>
+                                <input type="number" min="0" max="100" value={cov}
+                                  onChange={(e) => {
+                                    const dims = { ...prov.dimensions, [dim]: Number(e.target.value) };
+                                    const updated = { ...adminConfig.providers, [name]: { ...prov, dimensions: dims } };
+                                    setAdminConfig({ ...adminConfig, providers: updated });
+                                  }} style={{ width: "55px" }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
                     ))}
                   </div>
+
                   <button type="submit" style={{ marginTop: "1rem" }}>Save Configuration</button>
                 </form>
               )}

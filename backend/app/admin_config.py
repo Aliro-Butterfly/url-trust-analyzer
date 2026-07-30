@@ -10,6 +10,73 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = CONFIG_DIR / "admin_config.json"
 
+DEFAULT_PROVIDERS = {
+    "VirusTotal": {
+        "coefficient": 2.0,
+        "dimensions": {"threat_intel": 85},
+    },
+    "Google Safe Browsing": {
+        "coefficient": 1.8,
+        "dimensions": {"threat_intel": 90},
+    },
+    "AbuseIPDB": {
+        "coefficient": 1.8,
+        "dimensions": {"threat_intel": 50, "reputation": 60},
+    },
+    "AlienVault OTX": {
+        "coefficient": 1.6,
+        "dimensions": {"threat_intel": 65, "reputation": 55},
+    },
+    "URLVoid": {
+        "coefficient": 1.5,
+        "dimensions": {"blacklists": 60, "threat_intel": 50, "reputation": 50},
+    },
+    "ScamAdviser": {
+        "coefficient": 1.4,
+        "dimensions": {"reputation": 55, "threat_intel": 40},
+    },
+    "Reputation Signals": {
+        "coefficient": 1.4,
+        "dimensions": {"reputation": 40, "malware": 35, "blacklists": 30},
+    },
+    "Sucuri": {
+        "coefficient": 1.3,
+        "dimensions": {"malware": 60, "blacklists": 55},
+    },
+    "URLScan": {
+        "coefficient": 1.3,
+        "dimensions": {"threat_intel": 55, "infrastructure": 50},
+    },
+    "ICANN/RDAP": {
+        "coefficient": 1.2,
+        "dimensions": {"age": 80, "transparency": 70},
+    },
+    "DNS Infrastructure": {
+        "coefficient": 1.2,
+        "dimensions": {"infrastructure": 55},
+    },
+    "HackerTarget": {
+        "coefficient": 1.0,
+        "dimensions": {"infrastructure": 45},
+    },
+    "URL Properties": {
+        "coefficient": 0.8,
+        "dimensions": {"https": 40, "infrastructure": 30},
+    },
+    "Mozilla Observatory": {
+        "coefficient": 1.0,
+        "dimensions": {"https": 90},
+    },
+    "Certificate Transparency": {
+        "coefficient": 1.0,
+        "dimensions": {"infrastructure": 50, "transparency": 80},
+    },
+    "Privacy": {
+        "coefficient": 1.0,
+        "dimensions": {"privacy": 60},
+    },
+}
+
 DEFAULT_CONFIG = {
     "dimension_weights": {
         "malware": 27,
@@ -22,24 +89,7 @@ DEFAULT_CONFIG = {
         "transparency": 2,
         "https": 0,
     },
-    "provider_coefficients": {
-        "VirusTotal": 2.0,
-        "Google Safe Browsing": 1.8,
-        "AbuseIPDB": 1.8,
-        "AlienVault OTX": 1.6,
-        "URLVoid": 1.5,
-        "ScamAdviser": 1.4,
-        "Reputation Signals": 1.4,
-        "Sucuri": 1.3,
-        "URLScan": 1.3,
-        "ICANN/RDAP": 1.2,
-        "DNS Infrastructure": 1.2,
-        "HackerTarget": 1.0,
-        "URL Properties": 0.8,
-        "Mozilla Observatory": 1.0,
-        "Certificate Transparency": 1.0,
-        "Privacy": 1.0,
-    },
+    "providers": dict(DEFAULT_PROVIDERS),
 }
 
 _config_cache: dict | None = None
@@ -53,16 +103,38 @@ def _load_config_raw() -> dict:
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 data = json.load(f)
-            merged = {**DEFAULT_CONFIG}
-            for key in ("dimension_weights", "provider_coefficients"):
-                if key in data and isinstance(data[key], dict):
-                    merged[key] = {**DEFAULT_CONFIG[key], **data[key]}
+            merged = _migrate_if_needed(data)
             _config_cache = merged
             return merged
         except Exception as exc:
             logger.warning("Failed to load admin config: %s", exc)
-    _config_cache = dict(DEFAULT_CONFIG)
+    _config_cache = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_CONFIG.items()}
     return _config_cache
+
+
+def _migrate_if_needed(data: dict) -> dict:
+    cfg = {**DEFAULT_CONFIG}
+    if "dimension_weights" in data and isinstance(data["dimension_weights"], dict):
+        cfg["dimension_weights"] = {**cfg["dimension_weights"], **data["dimension_weights"]}
+    if "providers" in data and isinstance(data["providers"], dict):
+        for name, prov in DEFAULT_PROVIDERS.items():
+            if name in data["providers"] and isinstance(data["providers"][name], dict):
+                stored = data["providers"][name]
+                merged_prov = {"coefficient": stored.get("coefficient", prov["coefficient"])}
+                dims = stored.get("dimensions")
+                if dims is not None and isinstance(dims, dict):
+                    merged_prov["dimensions"] = dict(dims)
+                else:
+                    merged_prov["dimensions"] = dict(prov["dimensions"])
+                cfg["providers"][name] = merged_prov
+    elif "provider_coefficients" in data and isinstance(data["provider_coefficients"], dict):
+        coeffs = data["provider_coefficients"]
+        for name, prov in DEFAULT_PROVIDERS.items():
+            cfg["providers"][name] = {
+                "coefficient": coeffs.get(name, prov["coefficient"]),
+                "dimensions": dict(prov["dimensions"]),
+            }
+    return cfg
 
 
 def _invalidate_cache():
@@ -74,24 +146,34 @@ def get_dimension_weights() -> dict[str, int]:
     return dict(_load_config_raw()["dimension_weights"])
 
 
-def get_provider_coefficients() -> dict[str, float]:
-    return dict(_load_config_raw()["provider_coefficients"])
+def get_providers_config() -> dict[str, dict]:
+    return {k: dict(v) for k, v in _load_config_raw()["providers"].items()}
+
+
+def get_provider_coefficient(name: str) -> float:
+    prov = _load_config_raw()["providers"].get(name)
+    return prov["coefficient"] if prov else 1.0
+
+
+def get_provider_dimensions(name: str) -> dict[str, int]:
+    prov = _load_config_raw()["providers"].get(name)
+    return dict(prov["dimensions"]) if prov else {}
 
 
 def get_full_config() -> dict:
     return {
         "dimension_weights": get_dimension_weights(),
-        "provider_coefficients": get_provider_coefficients(),
+        "providers": get_providers_config(),
     }
 
 
 def update_config(dimension_weights: dict[str, int] | None = None,
-                  provider_coefficients: dict[str, float] | None = None) -> dict:
+                  providers: dict[str, dict] | None = None) -> dict:
     current = _load_config_raw()
     if dimension_weights is not None:
         current["dimension_weights"] = dimension_weights
-    if provider_coefficients is not None:
-        current["provider_coefficients"] = provider_coefficients
+    if providers is not None:
+        current["providers"] = providers
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
