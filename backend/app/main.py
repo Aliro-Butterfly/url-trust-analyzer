@@ -34,6 +34,7 @@ from .schemas import (
     ApiKeysUpdate,
     AuthResponse,
     HistoryItem,
+    LoginRequest,
     UserCreate,
 )
 from .admin_config import (
@@ -111,7 +112,7 @@ def register(user: UserCreate) -> JSONResponse:
 
 
 @app.post("/auth/login", response_model=AuthResponse)
-def login(user: UserCreate) -> JSONResponse:
+def login(user: LoginRequest) -> JSONResponse:
     import hashlib
     if not ADMIN_USERNAME or not ADMIN_PASSWORD:
         pass

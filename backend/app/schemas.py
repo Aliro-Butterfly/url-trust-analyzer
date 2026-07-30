@@ -40,6 +40,11 @@ class UserCreate(BaseModel):
     password: constr(min_length=8)
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class AuthResponse(BaseModel):
     username: str
     is_admin: bool = False

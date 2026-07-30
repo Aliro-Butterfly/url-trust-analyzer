@@ -165,7 +165,10 @@ function App() {
 
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
+        const msg = Array.isArray(payload.detail)
+          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
+          : payload.detail || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
 
       const payload = (await response.json()) as AuthResponse;
@@ -284,7 +287,10 @@ function App() {
 
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
+        const msg = Array.isArray(payload.detail)
+          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
+          : payload.detail || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
 
       const payload = await response.json();
@@ -331,7 +337,10 @@ function App() {
       });
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.detail || "Save failed");
+        const msg = Array.isArray(payload.detail)
+          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
+          : payload.detail || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
       const payload = await response.json();
       setAdminConfig(payload);
@@ -363,7 +372,10 @@ function App() {
 
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
+        const msg = Array.isArray(payload.detail)
+          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
+          : payload.detail || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
 
       const payload = (await response.json()) as AnalysisResponse;
