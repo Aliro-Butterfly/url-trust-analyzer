@@ -1,42 +1,41 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from typing import Iterable, Sequence
 
+from ..admin_config import get_dimension_weights, get_provider_coefficients
 from ..schemas import ProviderResult
 
-WEIGHTS = {
-    "malware": 30,
-    "reputation": 20,
-    "age": 15,
-    "threat_intel": 15,
-    "infrastructure": 10,
-    "https": 10,
-    "blacklists": 10,
-    "transparency": 5,
-}
 
+def compute_category_scores(successful: Sequence[ProviderResult]) -> dict[str, int]:
+    weights = get_dimension_weights()
+    coefficients = get_provider_coefficients()
+    category_data: dict[str, list[tuple[int, float]]] = defaultdict(list)
 
-def compute_dimension_scores(provider_results: Iterable[ProviderResult]) -> dict[str, int]:
-    score_buckets: dict[str, list[int]] = defaultdict(list)
+    for provider in successful:
+        coefficient = coefficients.get(provider.provider, 1.0)
+        effective_weight = coefficient * (provider.confidence / 100.0)
 
-    for provider in provider_results:
         for dimension, value in provider.dimensions.items():
-            if dimension in WEIGHTS:
-                score_buckets[dimension].append(value)
+            if dimension in weights:
+                category_data[dimension].append((value, effective_weight))
 
-    return {
-        dimension: round(sum(values) / len(values))
-        for dimension, values in score_buckets.items()
-    }
+    scores = {}
+    for category, values in category_data.items():
+        weighted_sum = sum(v * w for v, w in values)
+        total_weight = sum(w for _, w in values)
+        scores[category] = round(weighted_sum / total_weight) if total_weight > 0 else 0
+
+    return scores
 
 
 def compute_overall_score(score_breakdown: dict[str, int]) -> int:
-    available_weight = sum(WEIGHTS[dim] for dim in score_breakdown)
+    weights = get_dimension_weights()
+    available_weight = sum(weights[dim] for dim in score_breakdown)
     if available_weight == 0:
         return 0
 
-    weighted_total = sum(score_breakdown[dim] * WEIGHTS[dim] for dim in score_breakdown)
+    weighted_total = sum(score_breakdown[dim] * weights[dim] for dim in score_breakdown)
     return round(weighted_total / available_weight)
 
 
@@ -74,6 +73,11 @@ def build_trust_reasons(
         reasons.append("The URL has a good reputation signal.")
     elif "reputation" in score_breakdown:
         reasons.append("The URL has weak reputation signals.")
+
+    if score_breakdown.get("privacy", 0) >= 80:
+        reasons.append("The page respects visitor privacy with minimal tracking.")
+    elif "privacy" in score_breakdown:
+        reasons.append("The page contains trackers or scripts that may compromise privacy.")
 
     if score_breakdown.get("malware", 0) < 60:
         reasons.append("Suspicious URL patterns were detected that lower the malware score.")

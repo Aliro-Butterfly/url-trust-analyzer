@@ -30,6 +30,12 @@ interface HistoryItem {
 
 interface AuthResponse {
   username: string;
+  is_admin?: boolean;
+}
+
+interface AdminConfig {
+  dimension_weights: Record<string, number>;
+  provider_coefficients: Record<string, number>;
 }
 
 function formatDetail(value: unknown): string {
@@ -79,18 +85,27 @@ function App() {
   const [googleSafeBrowsingKey, setGoogleSafeBrowsingKey] = useState("");
   const [virusTotalKey, setVirusTotalKey] = useState("");
   const [abuseipdbKey, setAbuseipdbKey] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminConfig, setAdminConfig] = useState<AdminConfig | null>(null);
+  const [adminMessage, setAdminMessage] = useState<string | null>(null);
 
   const loadUser = async () => {
     try {
       const response = await fetch("/api/auth/me", { credentials: "include" });
       if (!response.ok) {
         setUser(null);
+        setIsAdmin(false);
         return;
       }
       const payload = (await response.json()) as AuthResponse;
       setUser(payload.username);
+      setIsAdmin(payload.is_admin === true);
+      if (payload.is_admin) {
+        loadAdminConfig();
+      }
     } catch (err) {
       setUser(null);
+      setIsAdmin(false);
     }
   };
 
@@ -155,9 +170,14 @@ function App() {
 
       const payload = (await response.json()) as AuthResponse;
       setUser(payload.username);
+      setIsAdmin(payload.is_admin === true);
       setUsername("");
       setPassword("");
-      await loadHistory();
+      if (payload.is_admin) {
+        await loadAdminConfig();
+      } else {
+        await loadHistory();
+      }
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Authentication error occurred.");
     } finally {
@@ -171,8 +191,10 @@ function App() {
       credentials: "include",
     });
     setUser(null);
+    setIsAdmin(false);
     setAnalysis(null);
     setHistory([]);
+    setAdminConfig(null);
   };
 
   const downloadReport = async () => {
@@ -279,6 +301,46 @@ function App() {
     }
   };
 
+  const loadAdminConfig = async () => {
+    try {
+      const response = await fetch("/api/admin/config", { credentials: "include" });
+      if (!response.ok) {
+        setIsAdmin(false);
+        return;
+      }
+      const payload = await response.json();
+      setAdminConfig(payload);
+    } catch {
+      setIsAdmin(false);
+    }
+  };
+
+  const handleAdminSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAdminMessage(null);
+    if (!adminConfig) return;
+    try {
+      const response = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          dimension_weights: adminConfig.dimension_weights,
+          provider_coefficients: adminConfig.provider_coefficients,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "Save failed");
+      }
+      const payload = await response.json();
+      setAdminConfig(payload);
+      setAdminMessage("Configuration saved successfully.");
+    } catch (err) {
+      setAdminMessage(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
@@ -357,6 +419,57 @@ function App() {
             </div>
             {authError && <div className="toast error">{authError}</div>}
           </section>
+        ) : isAdmin ? (
+          <>
+            <section className="result-card">
+              <div className="result-header">
+                <div>
+                  <p>Signed in as</p>
+                  <strong>{user} (admin)</strong>
+                </div>
+                <div>
+                  <button type="button" onClick={handleLogout}>Logout</button>
+                </div>
+              </div>
+            </section>
+            <section className="result-card">
+              <h2>Scoring Configuration</h2>
+              {adminConfig && (
+                <form onSubmit={handleAdminSave}>
+                  <h3>Category Weights</h3>
+                  <p className="subtext">Weight of each category in the overall score (sum should be ~100).</p>
+                  <div className="breakdown-list">
+                    {Object.entries(adminConfig.dimension_weights).map(([key, val]) => (
+                      <div key={key} className="breakdown-item">
+                        <span>{key}</span>
+                        <input type="number" min="0" max="100" value={val}
+                          onChange={(e) => setAdminConfig({
+                            ...adminConfig,
+                            dimension_weights: { ...adminConfig.dimension_weights, [key]: Number(e.target.value) },
+                          })} style={{ width: "70px" }} />
+                      </div>
+                    ))}
+                  </div>
+                  <h3>Provider Coefficients</h3>
+                  <p className="subtext">Relative importance of each provider (higher = more influence).</p>
+                  <div className="breakdown-list">
+                    {Object.entries(adminConfig.provider_coefficients).map(([key, val]) => (
+                      <div key={key} className="breakdown-item">
+                        <span>{key}</span>
+                        <input type="number" step="0.1" min="0" max="10" value={val}
+                          onChange={(e) => setAdminConfig({
+                            ...adminConfig,
+                            provider_coefficients: { ...adminConfig.provider_coefficients, [key]: Number(e.target.value) },
+                          })} style={{ width: "70px" }} />
+                      </div>
+                    ))}
+                  </div>
+                  <button type="submit" style={{ marginTop: "1rem" }}>Save Configuration</button>
+                </form>
+              )}
+              {adminMessage && <div className={`toast ${adminMessage.includes("successfully") ? "success" : "error"}`}>{adminMessage}</div>}
+            </section>
+          </>
         ) : (
           <>
             <section className="result-card">
@@ -366,9 +479,7 @@ function App() {
                   <strong>{user}</strong>
                 </div>
                 <div>
-                  <button type="button" onClick={handleLogout}>
-                    Logout
-                  </button>
+                  <button type="button" onClick={handleLogout}>Logout</button>
                 </div>
               </div>
             </section>
@@ -409,7 +520,7 @@ function App() {
           </>
         )}
 
-        {user && (
+        {user && !isAdmin && (
           <section className="result-card">
             <form onSubmit={handleSubmit} className="search-form">
               <input

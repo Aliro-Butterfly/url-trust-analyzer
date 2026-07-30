@@ -1,10 +1,13 @@
 from ..providers import (
     AbuseIPDBProvider,
     AlienVaultOTXProvider,
+    CertificateTransparencyProvider,
     DnsProvider,
     GoogleSafeBrowsingProvider,
     HackerTargetProvider,
     IcannProvider,
+    MozillaObservatoryProvider,
+    PrivacyProvider,
     ReputationProvider,
     ScamDocProvider,
     SucuriProvider,
@@ -14,7 +17,7 @@ from ..providers import (
     VirusTotalProvider,
 )
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
-from ..scoring.scorer import build_trust_reasons, compute_dimension_scores, compute_overall_score
+from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_overall_score
 
 
 class AnalyzerService:
@@ -33,6 +36,9 @@ class AnalyzerService:
             HackerTargetProvider(),
             AlienVaultOTXProvider(),
             AbuseIPDBProvider(),
+            MozillaObservatoryProvider(),
+            CertificateTransparencyProvider(),
+            PrivacyProvider(),
         ]
 
     async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
@@ -63,7 +69,7 @@ class AnalyzerService:
             )
 
         successful = [pr for pr in provider_results if pr.status == "success"]
-        score_breakdown = compute_dimension_scores(successful)
+        score_breakdown = compute_category_scores(successful)
         overall_score = compute_overall_score(score_breakdown)
         average_confidence = (
             round(sum(pr.confidence for pr in successful) / len(successful))

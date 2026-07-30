@@ -1,9 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, status
 
 _LOG_FILE = Path(__file__).resolve().parent.parent.parent / "backend_api.log"
 logging.basicConfig(
@@ -34,6 +35,12 @@ from .schemas import (
     AuthResponse,
     HistoryItem,
     UserCreate,
+)
+from .admin_config import (
+    ADMIN_PASSWORD,
+    ADMIN_USERNAME,
+    get_full_config,
+    update_config,
 )
 from .services.analyzer import AnalyzerService
 
@@ -105,6 +112,16 @@ def register(user: UserCreate) -> JSONResponse:
 
 @app.post("/auth/login", response_model=AuthResponse)
 def login(user: UserCreate) -> JSONResponse:
+    import hashlib
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        pass
+    elif user.username == ADMIN_USERNAME and user.password == ADMIN_PASSWORD:
+        token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
+        response = JSONResponse({"username": user.username, "is_admin": True})
+        response.set_cookie(AUTH_COOKIE_NAME, create_access_token(user.username), httponly=True, samesite="strict", secure=False, max_age=30 * 60, path="/")
+        response.set_cookie(ADMIN_COOKIE_NAME, token, httponly=True, samesite="strict", secure=False, max_age=3600, path="/")
+        return response
+
     stored_user = get_user_by_username(user.username)
     if not stored_user or not verify_password(user.password, stored_user["password_hash"]):
         raise HTTPException(
@@ -124,7 +141,8 @@ def logout() -> JSONResponse:
 
 @app.get("/auth/me", response_model=AuthResponse)
 def me(current_user: dict[str, Any] = Depends(get_current_user)) -> AuthResponse:
-    return {"username": current_user["username"]}
+    is_admin = current_user["username"] == ADMIN_USERNAME
+    return {"username": current_user["username"], "is_admin": is_admin}
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
@@ -162,6 +180,63 @@ def update_api_keys(
 @app.get("/history", response_model=list[HistoryItem])
 def history(current_user: dict[str, Any] = Depends(get_current_user)) -> list[HistoryItem]:
     return fetch_history(username=current_user["username"])
+
+
+ADMIN_COOKIE_NAME = "admin_token"
+
+
+def require_admin(request: Request):
+    token = request.cookies.get(ADMIN_COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required.")
+    import hashlib
+    expected = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
+    if token != expected:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token.")
+    return True
+
+
+@dataclass
+class AdminLoginRequest:
+    username: str
+    password: str
+
+
+@dataclass
+class AdminConfigUpdate:
+    dimension_weights: dict[str, int] | None = None
+    provider_coefficients: dict[str, float] | None = None
+
+
+@app.post("/admin/login")
+def admin_login(body: AdminLoginRequest):
+    if body.username != ADMIN_USERNAME or body.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect admin credentials.")
+    import hashlib
+    token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
+    response = JSONResponse({"admin": True})
+    response.set_cookie(ADMIN_COOKIE_NAME, token, httponly=True, samesite="strict", secure=False, max_age=3600, path="/")
+    return response
+
+
+@app.post("/admin/logout")
+def admin_logout():
+    response = JSONResponse({"detail": "Admin logged out."})
+    response.delete_cookie(ADMIN_COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/admin/config")
+def admin_get_config(_=Depends(require_admin)):
+    return get_full_config()
+
+
+@app.put("/admin/config")
+def admin_update_config(body: AdminConfigUpdate, _=Depends(require_admin)):
+    return update_config(
+        dimension_weights=body.dimension_weights,
+        provider_coefficients=body.provider_coefficients,
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,31 @@
+{
+  "dimension_weights": {
+    "malware": 27,
+    "blacklists": 18,
+    "threat_intel": 18,
+    "reputation": 13,
+    "infrastructure": 9,
+    "privacy": 10,
+    "age": 3,
+    "transparency": 2,
+    "https": 0
+  },
+  "provider_coefficients": {
+    "VirusTotal": 2.0,
+    "Google Safe Browsing": 1.8,
+    "AbuseIPDB": 1.8,
+    "AlienVault OTX": 1.6,
+    "URLVoid": 1.5,
+    "ScamAdviser": 1.4,
+    "Reputation Signals": 1.4,
+    "Sucuri": 1.3,
+    "URLScan": 1.3,
+    "ICANN/RDAP": 1.2,
+    "DNS Infrastructure": 1.2,
+    "HackerTarget": 1.0,
+    "URL Properties": 0.8,
+    "Mozilla Observatory": 1.0,
+    "Certificate Transparency": 1.0,
+    "Privacy": 1.0
+  }
+}

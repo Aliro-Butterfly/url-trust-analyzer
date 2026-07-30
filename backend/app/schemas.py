@@ -42,6 +42,7 @@ class UserCreate(BaseModel):
 
 class AuthResponse(BaseModel):
     username: str
+    is_admin: bool = False
 
 
 class ApiKeysUpdate(BaseModel):
