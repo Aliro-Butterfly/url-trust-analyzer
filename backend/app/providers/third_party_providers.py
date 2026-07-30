@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import urllib.parse
 from typing import Any
@@ -7,6 +9,8 @@ from typing import Any
 import httpx
 
 from .base import Provider
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_domain(url: str) -> str | None:
@@ -23,7 +27,7 @@ def _user_agent() -> str:
 
 async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
     try:
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _user_agent()}) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _user_agent()}, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.text
@@ -33,11 +37,17 @@ async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
 
 def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str, bool]:
     lower = content.lower()
-    if any(token in lower for token in negative):
-        return 28, "The scraped page contains negative reputation indicators.", True
 
     if any(token in lower for token in positive):
         return 90, "The scraped page contains positive reputation indicators.", True
+
+    for token in negative:
+        idx = lower.find(token)
+        while idx != -1:
+            before = lower[max(0, idx - 6) : idx].strip()
+            if before and before.split()[-1] not in ("no", "not", "non", "without"):
+                return 28, f"The scraped page contains negative reputation indicators ({token}).", True
+            idx = lower.find(token, idx + 1)
 
     return 60, "The scraped page did not contain a clear verdict.", False
 
@@ -66,10 +76,20 @@ class VirusTotalProvider(Provider):
                     resource_id = create_payload.get("data", {}).get("id")
 
                     if resource_id:
-                        report_response = await client.get(f"https://www.virustotal.com/api/v3/urls/{resource_id}")
-                        report_response.raise_for_status()
-                        payload = report_response.json()
-                        stats = payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                        for _ in range(6):
+                            analysis_response = await client.get(f"https://www.virustotal.com/api/v3/analyses/{resource_id}")
+                            analysis_response.raise_for_status()
+                            analysis_payload = analysis_response.json()
+                            analysis_status = analysis_payload.get("data", {}).get("attributes", {}).get("status")
+                            if analysis_status == "completed":
+                                break
+                            await asyncio.sleep(2)
+                        if analysis_status == "completed":
+                            stats = analysis_payload.get("data", {}).get("attributes", {}).get("stats", {})
+                        else:
+                            stats = analysis_payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                        if not stats:
+                            stats = {}
                         positives = stats.get("malicious", 0) + stats.get("suspicious", 0)
                         total = sum(stats.values())
                         score = _clamp(100 - positives * 15)
@@ -88,8 +108,11 @@ class VirusTotalProvider(Provider):
                             },
                             "dimensions": {"threat_intel": score},
                         }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    logger.warning("VirusTotal API call failed: %s | body=%s", exc, exc.response.text[:500])
+                else:
+                    logger.warning("VirusTotal API call failed: %s", exc)
 
         page = await _fetch_text(f"https://www.virustotal.com/gui/url/search?query={entity}")
         if not page:
@@ -171,8 +194,12 @@ class GoogleSafeBrowsingProvider(Provider):
                         "details": {"matches": []},
                         "dimensions": {"threat_intel": 92},
                     }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    body = exc.response.text[:500]
+                    logger.warning("Google Safe Browsing API call failed: %s | body=%s", exc, body)
+                else:
+                    logger.warning("Google Safe Browsing API call failed: %s", exc)
 
         page = await _fetch_text(
             f"https://transparencyreport.google.com/safe-browsing/search?url={urllib.parse.quote(url, safe='')}",
@@ -245,8 +272,11 @@ class URLScanProvider(Provider):
                             "details": {"verdicts": verdicts},
                             "dimensions": {"threat_intel": score},
                         }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    logger.warning("URLScan API call failed: %s | body=%s", exc, exc.response.text[:500])
+                else:
+                    logger.warning("URLScan API call failed: %s", exc)
 
         page = await _fetch_text(f"https://urlscan.io/domain/{urllib.parse.quote(domain)}")
         if not page:
@@ -306,18 +336,22 @@ class UrlVoidProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        score, note, has_verdict = _score_from_page(
-            page,
-            positive=["not blacklisted", "no blacklist detected", "no threats found"],
-            negative=["blacklisted", "malicious", "phishing", "scam"],
-        )
+        lower = page.lower()
+        clean_count = lower.count("text-success") + lower.count("icon-check")
+        dirty_count = lower.count("text-danger") + lower.count("icon-ban") + lower.count("icon-times")
+        if dirty_count == 0 and clean_count > 0:
+            score, note, has_verdict = 90, "URLVoid detected no blacklisting against this domain.", True
+        elif dirty_count > 0 and clean_count == 0:
+            score, note, has_verdict = 28, f"URLVoid detected {dirty_count} blacklist(s) flagging this domain.", True
+        else:
+            score, note, has_verdict = 60, "URLVoid scraping did not yield a clear verdict.", False
         return {
             "provider": self.name,
             "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "URLVoid reputation was estimated from the public site scan page." if has_verdict else "URLVoid scraping did not yield a clear verdict.",
-            "details": {"domain": domain, "note": note},
+            "summary": note,
+            "details": {"domain": domain, "detections": dirty_count, "blacklists_checked": clean_count + dirty_count},
             "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
@@ -414,32 +448,45 @@ class TalosProvider(Provider):
 
 
 class ScamDocProvider(Provider):
-    name = "ScamDoc"
+    name = "ScamAdviser"
 
     async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
-        page = await _fetch_text(f"https://www.scamdoc.com/check?url={urllib.parse.quote(url, safe='')}" )
+        page = await _fetch_text(
+            f"https://www.scamadviser.com/check-website/{urllib.parse.quote(urllib.parse.urlparse(url).hostname or url, safe='')}",
+            timeout=15.0,
+        )
         if not page:
             return {
                 "provider": self.name,
                 "status": "error",
                 "score": 55,
                 "confidence": 35,
-                "summary": "ScamDoc scraping failed.",
+                "summary": "ScamAdviser scraping failed.",
                 "details": {"url": url},
                 "dimensions": {"threat_intel": 55},
             }
 
-        score, note, has_verdict = _score_from_page(
-            page,
-            positive=["not a scam", "safe site", "trustworthy"],
-            negative=["scam", "fraud", "unsafe", "dangerous"],
-        )
+        lower = page.lower()
+        if "trust" in lower and "very low" not in lower and "high risk" not in lower:
+            has_verdict = True
+            score = 92
+            note = "ScamAdviser indicates this site is trustworthy."
+        elif "very low" in lower or "high risk" in lower or "untrustworthy" in lower:
+            has_verdict = True
+            score = 25
+            note = "ScamAdviser indicates this site has a low trust rating."
+        else:
+            score, note, has_verdict = _score_from_page(
+                page,
+                positive=["trustworthy", "safe", "legitimate", "trust score"],
+                negative=["scam", "fraud", "unsafe", "dangerous", "high risk"],
+            )
         return {
             "provider": self.name,
             "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "ScamDoc reputation was estimated from the public checker page." if has_verdict else "ScamDoc scraping did not yield a clear verdict.",
+            "summary": "ScamAdviser trust rating was evaluated using the public checker page." if has_verdict else "ScamAdviser scraping did not yield a clear verdict.",
             "details": {"url": url, "note": note},
             "dimensions": {"threat_intel": score} if has_verdict else {},
         }

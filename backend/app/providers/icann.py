@@ -25,7 +25,7 @@ class IcannProvider(Provider):
             }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.get(f"https://rdap.org/domain/{domain}")
                 response.raise_for_status()
                 payload = response.json()

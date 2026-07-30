@@ -1,7 +1,19 @@
+import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, status
+
+_LOG_FILE = Path(__file__).resolve().parent.parent.parent / "backend_api.log"
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s:%(name)s:%(message)s",
+    handlers=[
+        logging.FileHandler(str(_LOG_FILE), mode="a"),
+        logging.StreamHandler(),
+    ],
+)
 from fastapi.responses import JSONResponse
 
 from .auth import AUTH_COOKIE_NAME, create_access_token, decode_access_token, hash_password, verify_password
@@ -132,6 +144,7 @@ def get_api_keys(current_user: dict[str, Any] = Depends(get_current_user)) -> Ap
         has_urlscan=bool(api_keys.get("URLSCAN")),
         has_google_safebrowsing=bool(api_keys.get("GOOGLE_SAFEBROWSING")),
         has_virustotal=bool(api_keys.get("VIRUSTOTAL")),
+        has_abuseipdb=bool(api_keys.get("ABUSEIPDB")),
     )
 
 
@@ -142,6 +155,7 @@ def update_api_keys(
     save_api_key(current_user["username"], "URLSCAN", update.urlscan)
     save_api_key(current_user["username"], "GOOGLE_SAFEBROWSING", update.google_safebrowsing)
     save_api_key(current_user["username"], "VIRUSTOTAL", update.virustotal)
+    save_api_key(current_user["username"], "ABUSEIPDB", update.abuseipdb)
     return get_api_keys(current_user)
 
 

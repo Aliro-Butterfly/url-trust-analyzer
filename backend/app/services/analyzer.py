@@ -1,11 +1,13 @@
 from ..providers import (
+    AbuseIPDBProvider,
+    AlienVaultOTXProvider,
     DnsProvider,
     GoogleSafeBrowsingProvider,
+    HackerTargetProvider,
     IcannProvider,
     ReputationProvider,
     ScamDocProvider,
     SucuriProvider,
-    TalosProvider,
     URLScanProvider,
     UrlPropertiesProvider,
     UrlVoidProvider,
@@ -25,10 +27,12 @@ class AnalyzerService:
             VirusTotalProvider(),
             UrlVoidProvider(),
             SucuriProvider(),
-            TalosProvider(),
             GoogleSafeBrowsingProvider(),
             ScamDocProvider(),
             URLScanProvider(),
+            HackerTargetProvider(),
+            AlienVaultOTXProvider(),
+            AbuseIPDBProvider(),
         ]
 
     async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:

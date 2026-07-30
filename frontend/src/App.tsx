@@ -70,6 +70,7 @@ function App() {
     has_urlscan: false,
     has_google_safebrowsing: false,
     has_virustotal: false,
+    has_abuseipdb: false,
   });
   const [apiKeyLoading, setApiKeyLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
@@ -77,6 +78,7 @@ function App() {
   const [urlscanKey, setUrlscanKey] = useState("");
   const [googleSafeBrowsingKey, setGoogleSafeBrowsingKey] = useState("");
   const [virusTotalKey, setVirusTotalKey] = useState("");
+  const [abuseipdbKey, setAbuseipdbKey] = useState("");
 
   const loadUser = async () => {
     try {
@@ -112,7 +114,7 @@ function App() {
     try {
       const response = await fetch("/api/auth/api-keys", { credentials: "include" });
       if (!response.ok) {
-        setApiKeyStatus({ has_urlscan: false, has_google_safebrowsing: false, has_virustotal: false });
+        setApiKeyStatus({ has_urlscan: false, has_google_safebrowsing: false, has_virustotal: false, has_abuseipdb: false });
         return;
       }
       const payload = await response.json();
@@ -254,6 +256,7 @@ function App() {
           urlscan: urlscanKey || undefined,
           google_safebrowsing: googleSafeBrowsingKey || undefined,
           virustotal: virusTotalKey || undefined,
+          abuseipdb: abuseipdbKey || undefined,
         }),
       });
 
@@ -267,6 +270,7 @@ function App() {
       setUrlscanKey("");
       setGoogleSafeBrowsingKey("");
       setVirusTotalKey("");
+      setAbuseipdbKey("");
       setApiKeyMessage("API keys updated successfully. Only you can use these keys.");
     } catch (err) {
       setApiKeyMessage(err instanceof Error ? err.message : "Unable to update API keys.");
@@ -389,6 +393,12 @@ function App() {
                   value={virusTotalKey}
                   onChange={(event) => setVirusTotalKey(event.target.value)}
                   placeholder={apiKeyStatus.has_virustotal ? "VirusTotal key stored — enter new to replace" : "VirusTotal API key"}
+                />
+                <input
+                  type="password"
+                  value={abuseipdbKey}
+                  onChange={(event) => setAbuseipdbKey(event.target.value)}
+                  placeholder={apiKeyStatus.has_abuseipdb ? "AbuseIPDB key stored — enter new to replace" : "AbuseIPDB API key"}
                 />
                 <button type="submit" disabled={apiKeyLoading}>
                   {apiKeyLoading ? "Saving..." : "Save API Keys"}
