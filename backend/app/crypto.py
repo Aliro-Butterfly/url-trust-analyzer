@@ -8,10 +8,17 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 
+API_KEYS_SECRET_KEY = os.getenv("API_KEYS_SECRET") or os.getenv("JWT_SECRET")
+
+if not API_KEYS_SECRET_KEY:
+    raise RuntimeError(
+        "API_KEYS_SECRET or JWT_SECRET must be set in environment "
+        "to ensure API key encryption is stable across restarts."
+    )
+
+
 def _api_keys_secret_key() -> bytes:
-    secret = os.getenv("API_KEYS_SECRET") or os.getenv("JWT_SECRET") or "url-trust-analyzer-default-secret"
-    if not isinstance(secret, bytes):
-        secret = secret.encode("utf-8")
+    secret = API_KEYS_SECRET_KEY.encode("utf-8")
     return base64.urlsafe_b64encode(hashlib.sha256(secret).digest())
 
 

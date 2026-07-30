@@ -9,7 +9,13 @@ from typing import Any
 
 from jose import JWTError, jwt
 
-JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(32)
+JWT_SECRET = os.getenv("JWT_SECRET")
+
+if not JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET environment variable is required. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 PASSWORD_ITERATIONS = 200_000

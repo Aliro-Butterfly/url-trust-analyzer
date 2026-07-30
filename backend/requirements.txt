@@ -5,3 +5,4 @@ pydantic
 pytest
 python-jose[cryptography]
 cryptography
+python-dotenv
