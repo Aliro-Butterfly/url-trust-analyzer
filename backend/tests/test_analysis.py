@@ -5,7 +5,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
+from backend.app.main import analyzer_service, app
+from backend.app.database import initialize_database
 from backend.app.providers.dns_provider import DnsProvider
 from backend.app.providers.icann import IcannProvider
 from backend.app.providers.reputation_provider import ReputationProvider
@@ -28,6 +29,7 @@ def create_temporary_db(monkeypatch):
     db_file = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     db_file.close()
     monkeypatch.setenv("URL_TRUST_ANALYZER_DB", db_file.name)
+    initialize_database()
     return db_file.name
 
 
@@ -144,7 +146,7 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 50
-    assert len(payload["results"]) == 11
+    assert len(payload["results"]) == len(analyzer_service.providers)
     assert any(result["provider"] == "VirusTotal" for result in payload["results"])
     assert any(result["provider"] == "Google Safe Browsing" for result in payload["results"])
     assert any(result["provider"] == "Cisco Talos" for result in payload["results"])
@@ -157,6 +159,7 @@ def test_history_endpoint_records_analysis(monkeypatch):
     db_file = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     db_file.close()
     monkeypatch.setenv("URL_TRUST_ANALYZER_DB", db_file.name)
+    initialize_database()
 
     async def fake_get(self, url, timeout=10.0):
         if "rdap.org" in url:
@@ -215,6 +218,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": False,
         "has_google_safebrowsing": False,
         "has_virustotal": False,
+        "has_abuseipdb": False,
     }
 
     update_response = client.put(
@@ -230,6 +234,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": True,
         "has_google_safebrowsing": True,
         "has_virustotal": True,
+        "has_abuseipdb": False,
     }
 
     second_client = TestClient(app)
@@ -240,6 +245,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": False,
         "has_google_safebrowsing": False,
         "has_virustotal": False,
+        "has_abuseipdb": False,
     }
 
 
@@ -282,3 +288,29 @@ def test_history_is_scoped_per_user(monkeypatch):
     second_history = second_client.get("/history")
     assert second_history.status_code == 200
     assert second_history.json() == []
+
+
+def test_admin_config_rejects_invalid_values(monkeypatch):
+    monkeypatch.setattr("backend.app.main.ADMIN_USERNAME", "admin")
+    monkeypatch.setattr("backend.app.main.ADMIN_PASSWORD", "secret")
+
+    client = TestClient(app)
+
+    admin_login = client.post("/admin/login", json={"username": "admin", "password": "secret"})
+    assert admin_login.status_code == 200
+
+    config_response = client.get("/admin/config")
+    assert config_response.status_code == 200
+    config_payload = config_response.json()
+    config_payload["dimension_weights"]["malware"] = -1
+
+    invalid_weight_response = client.put("/admin/config", json=config_payload)
+    assert invalid_weight_response.status_code == 400
+    assert "dimension_weights.malware must be between 0 and 100." in invalid_weight_response.json()["detail"]
+
+    config_payload["dimension_weights"]["malware"] = 27
+    config_payload["providers"]["VirusTotal"]["coefficient"] = 0
+
+    invalid_coefficient_response = client.put("/admin/config", json=config_payload)
+    assert invalid_coefficient_response.status_code == 400
+    assert "providers.VirusTotal.coefficient must be greater than 0" in invalid_coefficient_response.json()["detail"]

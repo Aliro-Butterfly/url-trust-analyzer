@@ -1,3 +1,8 @@
+﻿from __future__ import annotations
+
+import asyncio
+from typing import Any
+
 from ..providers import (
     AbuseIPDBProvider,
     AlienVaultOTXProvider,
@@ -11,18 +16,20 @@ from ..providers import (
     ReputationProvider,
     ScamDocProvider,
     SucuriProvider,
+    TalosProvider,
     URLScanProvider,
     UrlPropertiesProvider,
     UrlVoidProvider,
     VirusTotalProvider,
 )
+from ..providers.base import Provider
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
 from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_global_confidence, compute_overall_score
 
 
 class AnalyzerService:
     def __init__(self) -> None:
-        self.providers = [
+        self.providers: list[Provider] = [
             IcannProvider(),
             UrlPropertiesProvider(),
             DnsProvider(),
@@ -30,6 +37,7 @@ class AnalyzerService:
             VirusTotalProvider(),
             UrlVoidProvider(),
             SucuriProvider(),
+            TalosProvider(),
             GoogleSafeBrowsingProvider(),
             ScamDocProvider(),
             URLScanProvider(),
@@ -41,32 +49,48 @@ class AnalyzerService:
             PrivacyProvider(),
         ]
 
+    async def _run_provider(
+        self, provider: Provider, url: str, api_key: str | None
+    ) -> dict[str, Any]:
+        """Run a single provider and always return a valid result dict, even on unexpected exceptions."""
+        try:
+            return await provider.analyze(url, api_key)
+        except Exception as exc:
+            return {
+                "provider": provider.name,
+                "status": "error",
+                "score": 50,
+                "confidence": 0,
+                "summary": f"Unexpected error: {exc}",
+                "details": {},
+                "dimensions": {},
+            }
+
     async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
-        provider_results = []
         normalized_url = str(request.url).rstrip("/")
 
+        tasks = []
         for provider in self.providers:
-            provider_api_key = None
+            provider_api_key: str | None = None
             provider_api_name = getattr(provider, "api_key_name", None)
             if provider_api_name and api_keys:
                 provider_api_key = api_keys.get(provider_api_name)
+            tasks.append(self._run_provider(provider, normalized_url, provider_api_key))
 
-            try:
-                result = await provider.analyze(normalized_url, provider_api_key)
-            except TypeError:
-                result = await provider.analyze(normalized_url)
+        raw_results = await asyncio.gather(*tasks)
 
-            provider_results.append(
-                ProviderResult(
-                    provider=result["provider"],
-                    status=result["status"],
-                    score=result["score"],
-                    confidence=result["confidence"],
-                    summary=result["summary"],
-                    details=result["details"],
-                    dimensions=result.get("dimensions", {}),
-                )
+        provider_results = [
+            ProviderResult(
+                provider=result["provider"],
+                status=result["status"],
+                score=result["score"],
+                confidence=result["confidence"],
+                summary=result["summary"],
+                details=result["details"],
+                dimensions=result.get("dimensions", {}),
             )
+            for result in raw_results
+        ]
 
         successful = [pr for pr in provider_results if pr.status == "success"]
         score_breakdown = compute_category_scores(successful)

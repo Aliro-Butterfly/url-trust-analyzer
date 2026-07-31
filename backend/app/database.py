@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -71,7 +71,6 @@ def initialize_database() -> None:
 
 
 def save_analysis(report: dict[str, Any], username: str) -> None:
-    initialize_database()
     with get_connection() as connection:
         user_row = connection.execute(
             "SELECT id FROM users WHERE username = ?",
@@ -95,7 +94,6 @@ def save_analysis(report: dict[str, Any], username: str) -> None:
 
 
 def create_user(username: str, password_hash: str) -> None:
-    initialize_database()
     with get_connection() as connection:
         connection.execute(
             "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
@@ -105,7 +103,6 @@ def create_user(username: str, password_hash: str) -> None:
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
-    initialize_database()
     with get_connection() as connection:
         row = connection.execute(
             "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
@@ -115,7 +112,6 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
 
 
 def save_api_key(username: str, provider: str, api_key: str | None) -> None:
-    initialize_database()
     user_row = get_user_by_username(username)
     if not user_row:
         return
@@ -143,7 +139,6 @@ def save_api_key(username: str, provider: str, api_key: str | None) -> None:
 
 
 def fetch_api_keys(username: str) -> dict[str, str]:
-    initialize_database()
     user_row = get_user_by_username(username)
     if not user_row:
         return {}
@@ -158,12 +153,11 @@ def fetch_api_keys(username: str) -> dict[str, str]:
     for row in rows:
         decrypted = decrypt_api_key(row["encrypted_key"])
         if decrypted is not None:
-            api_keys[row["provider"] ] = decrypted
+            api_keys[row["provider"]] = decrypted
     return api_keys
 
 
 def fetch_history(limit: int = 20, username: str | None = None) -> list[dict[str, Any]]:
-    initialize_database()
     with get_connection() as connection:
         if username:
             user_row = connection.execute(

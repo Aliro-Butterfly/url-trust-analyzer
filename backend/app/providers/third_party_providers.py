@@ -9,30 +9,9 @@ from typing import Any
 import httpx
 
 from .base import Provider
+from .utils import _clamp, _extract_domain, _fetch_text, _user_agent
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_domain(url: str) -> str | None:
-    try:
-        parsed = httpx.URL(url)
-    except Exception:
-        return None
-    return parsed.host
-
-
-def _user_agent() -> str:
-    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-
-async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
-    try:
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _user_agent()}, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.text
-    except Exception:
-        return None
 
 
 def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str, bool]:
@@ -50,10 +29,6 @@ def _score_from_page(content: str, positive: list[str], negative: list[str]) -> 
             idx = lower.find(token, idx + 1)
 
     return 60, "The scraped page did not contain a clear verdict.", False
-
-
-def _clamp(value: int) -> int:
-    return max(0, min(100, value))
 
 
 class VirusTotalProvider(Provider):

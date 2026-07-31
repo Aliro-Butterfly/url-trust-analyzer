@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent.parent
+CONFIG_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = CONFIG_DIR / "admin_config.json"
 
 DEFAULT_PROVIDERS = {
@@ -42,6 +42,10 @@ DEFAULT_PROVIDERS = {
     "Sucuri": {
         "coefficient": 1.3,
         "dimensions": {"malware": 60, "blacklists": 55},
+    },
+    "Cisco Talos": {
+        "coefficient": 1.1,
+        "dimensions": {"threat_intel": 55},
     },
     "URLScan": {
         "coefficient": 1.3,
@@ -93,6 +97,78 @@ DEFAULT_CONFIG = {
 }
 
 _config_cache: dict | None = None
+
+
+def _validate_score(value: int | float, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number.")
+    if value < 0 or value > 100:
+        raise ValueError(f"{field_name} must be between 0 and 100.")
+
+
+def _validate_coefficient(value: int | float, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number.")
+    if value <= 0 or value > 10:
+        raise ValueError(f"{field_name} must be greater than 0 and lower or equal to 10.")
+
+
+def _validate_dimension_weights(dimension_weights: dict[str, int]) -> None:
+    expected_keys = set(DEFAULT_CONFIG["dimension_weights"].keys())
+    received_keys = set(dimension_weights.keys())
+    if received_keys != expected_keys:
+        missing = sorted(expected_keys - received_keys)
+        extra = sorted(received_keys - expected_keys)
+        errors = []
+        if missing:
+            errors.append(f"missing keys: {', '.join(missing)}")
+        if extra:
+            errors.append(f"unknown keys: {', '.join(extra)}")
+        raise ValueError(f"Invalid dimension_weights schema ({'; '.join(errors)}).")
+
+    for key, value in dimension_weights.items():
+        _validate_score(value, f"dimension_weights.{key}")
+
+
+def _validate_providers_config(providers: dict[str, dict]) -> None:
+    expected_provider_names = set(DEFAULT_PROVIDERS.keys())
+    received_provider_names = set(providers.keys())
+    if received_provider_names != expected_provider_names:
+        missing = sorted(expected_provider_names - received_provider_names)
+        extra = sorted(received_provider_names - expected_provider_names)
+        errors = []
+        if missing:
+            errors.append(f"missing providers: {', '.join(missing)}")
+        if extra:
+            errors.append(f"unknown providers: {', '.join(extra)}")
+        raise ValueError(f"Invalid providers schema ({'; '.join(errors)}).")
+
+    for provider_name, provider_config in providers.items():
+        if not isinstance(provider_config, dict):
+            raise ValueError(f"providers.{provider_name} must be an object.")
+        if "coefficient" not in provider_config or "dimensions" not in provider_config:
+            raise ValueError(f"providers.{provider_name} must contain coefficient and dimensions.")
+
+        _validate_coefficient(provider_config["coefficient"], f"providers.{provider_name}.coefficient")
+
+        dimensions = provider_config["dimensions"]
+        if not isinstance(dimensions, dict):
+            raise ValueError(f"providers.{provider_name}.dimensions must be an object.")
+
+        expected_dimensions = set(DEFAULT_PROVIDERS[provider_name]["dimensions"].keys())
+        received_dimensions = set(dimensions.keys())
+        if received_dimensions != expected_dimensions:
+            missing = sorted(expected_dimensions - received_dimensions)
+            extra = sorted(received_dimensions - expected_dimensions)
+            errors = []
+            if missing:
+                errors.append(f"missing dimensions: {', '.join(missing)}")
+            if extra:
+                errors.append(f"unknown dimensions: {', '.join(extra)}")
+            raise ValueError(f"Invalid providers.{provider_name}.dimensions schema ({'; '.join(errors)}).")
+
+        for dimension_name, score in dimensions.items():
+            _validate_score(score, f"providers.{provider_name}.dimensions.{dimension_name}")
 
 
 def _load_config_raw() -> dict:
@@ -171,8 +247,10 @@ def update_config(dimension_weights: dict[str, int] | None = None,
                   providers: dict[str, dict] | None = None) -> dict:
     current = _load_config_raw()
     if dimension_weights is not None:
+        _validate_dimension_weights(dimension_weights)
         current["dimension_weights"] = dimension_weights
     if providers is not None:
+        _validate_providers_config(providers)
         current["providers"] = providers
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)

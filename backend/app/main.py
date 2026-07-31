@@ -1,22 +1,19 @@
-import logging
+﻿import logging
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, status
-
-_LOG_FILE = Path(__file__).resolve().parent.parent.parent / "backend_api.log"
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(levelname)s:%(name)s:%(message)s",
-    handlers=[
-        logging.FileHandler(str(_LOG_FILE), mode="a"),
-        logging.StreamHandler(),
-    ],
-)
 from fastapi.responses import JSONResponse
 
+from .admin_config import (
+    ADMIN_PASSWORD,
+    ADMIN_USERNAME,
+    get_full_config,
+    update_config,
+)
 from .auth import AUTH_COOKIE_NAME, create_access_token, decode_access_token, hash_password, verify_password
 from .database import (
     create_user,
@@ -27,6 +24,7 @@ from .database import (
     save_analysis,
     save_api_key,
 )
+from .rate_limit import RateLimiter
 from .schemas import (
     AnalysisResponse,
     AnalyzeRequest,
@@ -37,13 +35,17 @@ from .schemas import (
     LoginRequest,
     UserCreate,
 )
-from .admin_config import (
-    ADMIN_PASSWORD,
-    ADMIN_USERNAME,
-    get_full_config,
-    update_config,
-)
 from .services.analyzer import AnalyzerService
+
+_LOG_FILE = Path(__file__).resolve().parent.parent / "backend_api.log"
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s:%(name)s:%(message)s",
+    handlers=[
+        logging.FileHandler(str(_LOG_FILE), mode="a"),
+        logging.StreamHandler(),
+    ],
+)
 
 
 @asynccontextmanager
@@ -54,6 +56,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="URL Trust Analyzer - Backend", version="0.1.0", lifespan=lifespan)
 analyzer_service = AnalyzerService()
+ADMIN_COOKIE_NAME = "admin_token"
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+_auth_limiter = RateLimiter(max_requests=20, window_seconds=60)
+_admin_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
 
 def get_current_user(auth_token: str | None = Cookie(default=None)) -> dict[str, Any]:
@@ -87,11 +94,39 @@ def create_auth_response(username: str) -> JSONResponse:
         access_token,
         httponly=True,
         samesite="strict",
-        secure=False,
+        secure=COOKIE_SECURE,
         max_age=30 * 60,
         path="/",
     )
     return response
+
+
+def require_admin(request: Request) -> bool:
+    token = request.cookies.get(ADMIN_COOKIE_NAME)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin authentication required.",
+        )
+    payload = decode_access_token(token)
+    if not payload or not payload.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired admin token.",
+        )
+    return True
+
+
+@dataclass
+class AdminLoginRequest:
+    username: str
+    password: str
+
+
+@dataclass
+class AdminConfigUpdate:
+    dimension_weights: dict[str, int] | None = None
+    providers: dict[str, dict] | None = None
 
 
 @app.get("/health")
@@ -100,7 +135,7 @@ async def health():
 
 
 @app.post("/auth/register", response_model=AuthResponse)
-def register(user: UserCreate) -> JSONResponse:
+def register(user: UserCreate, _: None = Depends(_auth_limiter)) -> JSONResponse:
     if get_user_by_username(user.username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -112,15 +147,12 @@ def register(user: UserCreate) -> JSONResponse:
 
 
 @app.post("/auth/login", response_model=AuthResponse)
-def login(user: LoginRequest) -> JSONResponse:
-    import hashlib
-    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
-        pass
-    elif user.username == ADMIN_USERNAME and user.password == ADMIN_PASSWORD:
-        token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
+def login(user: LoginRequest, _: None = Depends(_auth_limiter)) -> JSONResponse:
+    if ADMIN_USERNAME and ADMIN_PASSWORD and user.username == ADMIN_USERNAME and user.password == ADMIN_PASSWORD:
+        admin_token = create_access_token(user.username, extra_claims={"is_admin": True})
         response = JSONResponse({"username": user.username, "is_admin": True})
-        response.set_cookie(AUTH_COOKIE_NAME, create_access_token(user.username), httponly=True, samesite="strict", secure=False, max_age=30 * 60, path="/")
-        response.set_cookie(ADMIN_COOKIE_NAME, token, httponly=True, samesite="strict", secure=False, max_age=3600, path="/")
+        response.set_cookie(AUTH_COOKIE_NAME, create_access_token(user.username), httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=30 * 60, path="/")
+        response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=3600, path="/")
         return response
 
     stored_user = get_user_by_username(user.username)
@@ -183,40 +215,16 @@ def history(current_user: dict[str, Any] = Depends(get_current_user)) -> list[Hi
     return fetch_history(username=current_user["username"])
 
 
-ADMIN_COOKIE_NAME = "admin_token"
-
-
-def require_admin(request: Request):
-    token = request.cookies.get(ADMIN_COOKIE_NAME)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required.")
-    import hashlib
-    expected = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
-    if token != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token.")
-    return True
-
-
-@dataclass
-class AdminLoginRequest:
-    username: str
-    password: str
-
-
-@dataclass
-class AdminConfigUpdate:
-    dimension_weights: dict[str, int] | None = None
-    providers: dict[str, dict] | None = None
-
-
 @app.post("/admin/login")
-def admin_login(body: AdminLoginRequest):
+def admin_login(body: AdminLoginRequest, _: None = Depends(_admin_limiter)):
     if body.username != ADMIN_USERNAME or body.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect admin credentials.")
-    import hashlib
-    token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect admin credentials.",
+        )
+    admin_token = create_access_token(body.username, extra_claims={"is_admin": True})
     response = JSONResponse({"admin": True})
-    response.set_cookie(ADMIN_COOKIE_NAME, token, httponly=True, samesite="strict", secure=False, max_age=3600, path="/")
+    response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=3600, path="/")
     return response
 
 
@@ -234,10 +242,16 @@ def admin_get_config(_=Depends(require_admin)):
 
 @app.put("/admin/config")
 def admin_update_config(body: AdminConfigUpdate, _=Depends(require_admin)):
-    return update_config(
-        dimension_weights=body.dimension_weights,
-        providers=body.providers,
-    )
+    try:
+        return update_config(
+            dimension_weights=body.dimension_weights,
+            providers=body.providers,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 if __name__ == "__main__":

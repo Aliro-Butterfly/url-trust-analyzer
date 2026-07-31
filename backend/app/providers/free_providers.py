@@ -2,36 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.parse
 from datetime import datetime, timezone
 from typing import Any
 
 from .base import Provider
+from .utils import _clamp, _extract_domain, _fetch_text
 
 logger = logging.getLogger(__name__)
-
-
-def _user_agent() -> str:
-    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-
-async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _user_agent()}, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.text
-    except Exception:
-        return None
-
-
-def _extract_domain(url: str) -> str | None:
-    try:
-        parsed = urllib.parse.urlparse(url)
-        return parsed.hostname
-    except Exception:
-        return None
 
 
 class HackerTargetProvider(Provider):
@@ -113,7 +90,6 @@ class AbuseIPDBProvider(Provider):
             return {"provider": self.name, "status": "no_data", "score": 60, "confidence": 30,
                     "summary": "No AbuseIPDB API key configured.", "details": {}, "dimensions": {}}
         try:
-            import httpx
             import socket
             ip = socket.gethostbyname(domain)
         except Exception:
@@ -400,6 +376,3 @@ class CertificateTransparencyProvider(Provider):
             "dimensions": {"infrastructure": score, "transparency": score},
         }
 
-
-def _clamp(value: int) -> int:
-    return max(0, min(100, value))

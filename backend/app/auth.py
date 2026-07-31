@@ -50,9 +50,11 @@ def verify_password(plain_password: str, stored_hash: str) -> bool:
         return False
 
 
-def create_access_token(username: str, expires_delta: timedelta | None = None) -> str:
+def create_access_token(username: str, expires_delta: timedelta | None = None, extra_claims: dict[str, Any] | None = None) -> str:
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     payload: dict[str, Any] = {"sub": username, "exp": expire}
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 

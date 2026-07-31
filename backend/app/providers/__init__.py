@@ -28,6 +28,7 @@ __all__ = [
     "VirusTotalProvider",
     "UrlVoidProvider",
     "SucuriProvider",
+    "TalosProvider",
     "GoogleSafeBrowsingProvider",
     "ScamDocProvider",
     "URLScanProvider",
