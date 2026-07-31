@@ -1,0 +1,122 @@
+{
+  "dimension_weights": {
+    "malware": 25,
+    "blacklists": 18,
+    "threat_intel": 20,
+    "reputation": 15,
+    "infrastructure": 8,
+    "privacy": 8,
+    "age": 3,
+    "transparency": 3,
+    "https": 0
+  },
+  "providers": {
+    "VirusTotal": {
+      "coefficient": 2.0,
+      "dimensions": {
+        "threat_intel": 85
+      }
+    },
+    "Google Safe Browsing": {
+      "coefficient": 1.8,
+      "dimensions": {
+        "threat_intel": 90
+      }
+    },
+    "AbuseIPDB": {
+      "coefficient": 1.8,
+      "dimensions": {
+        "threat_intel": 50,
+        "reputation": 60
+      }
+    },
+    "AlienVault OTX": {
+      "coefficient": 1.6,
+      "dimensions": {
+        "threat_intel": 65,
+        "reputation": 55
+      }
+    },
+    "URLVoid": {
+      "coefficient": 1.5,
+      "dimensions": {
+        "blacklists": 60,
+        "threat_intel": 50,
+        "reputation": 50
+      }
+    },
+    "ScamAdviser": {
+      "coefficient": 1.4,
+      "dimensions": {
+        "reputation": 55,
+        "threat_intel": 40
+      }
+    },
+    "Reputation Signals": {
+      "coefficient": 1.4,
+      "dimensions": {
+        "reputation": 40,
+        "malware": 35,
+        "blacklists": 30
+      }
+    },
+    "Sucuri": {
+      "coefficient": 1.3,
+      "dimensions": {
+        "malware": 60,
+        "blacklists": 55
+      }
+    },
+    "URLScan": {
+      "coefficient": 1.3,
+      "dimensions": {
+        "threat_intel": 55,
+        "infrastructure": 50
+      }
+    },
+    "ICANN/RDAP": {
+      "coefficient": 1.2,
+      "dimensions": {
+        "age": 80,
+        "transparency": 70
+      }
+    },
+    "DNS Infrastructure": {
+      "coefficient": 1.2,
+      "dimensions": {
+        "infrastructure": 55
+      }
+    },
+    "HackerTarget": {
+      "coefficient": 1.0,
+      "dimensions": {
+        "infrastructure": 45
+      }
+    },
+    "URL Properties": {
+      "coefficient": 0.8,
+      "dimensions": {
+        "infrastructure": 30
+      }
+    },
+    "Mozilla Observatory": {
+      "coefficient": 1.2,
+      "dimensions": {
+        "https": 90
+      }
+    },
+    "Certificate Transparency": {
+      "coefficient": 1.3,
+      "dimensions": {
+        "infrastructure": 50,
+        "transparency": 80
+      }
+    },
+    "Privacy": {
+      "coefficient": 0.5,
+      "dimensions": {
+        "privacy": 60
+      }
+    }
+  }
+}

@@ -44,7 +44,7 @@ class ReputationProvider(Provider):
         "verify",
     }
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         try:
             parsed = httpx.URL(url)
         except Exception:

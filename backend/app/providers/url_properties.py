@@ -8,7 +8,7 @@ from .base import Provider
 class UrlPropertiesProvider(Provider):
     name = "URL Properties"
 
-    async def analyze(self, url: str) -> dict[str, object]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, object]:
         try:
             parsed = httpx.URL(url)
         except Exception:

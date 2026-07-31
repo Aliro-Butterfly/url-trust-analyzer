@@ -1,54 +1,82 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from typing import Sequence
 
+from ..admin_config import get_dimension_weights, get_provider_coefficient, get_provider_dimensions
 from ..schemas import ProviderResult
 
-WEIGHTS = {
-    "malware": 30,
-    "reputation": 20,
-    "age": 15,
-    "threat_intel": 15,
-    "infrastructure": 10,
-    "https": 10,
-    "blacklists": 10,
-    "transparency": 5,
-}
 
+def compute_category_scores(successful: Sequence[ProviderResult]) -> dict[str, int]:
+    weights = get_dimension_weights()
+    category_data: dict[str, list[tuple[int, float]]] = defaultdict(list)
 
-def compute_dimension_scores(provider_results: Iterable[ProviderResult]) -> dict[str, int]:
-    score_buckets: dict[str, list[int]] = defaultdict(list)
+    for provider in successful:
+        coefficient = get_provider_coefficient(provider.provider)
+        coverage_map = get_provider_dimensions(provider.provider)
 
-    for provider in provider_results:
         for dimension, value in provider.dimensions.items():
-            if dimension in WEIGHTS:
-                score_buckets[dimension].append(value)
+            if dimension not in weights:
+                continue
+            coverage = coverage_map.get(dimension, 50)
+            effective_weight = coefficient * (provider.confidence / 100.0) * (coverage / 100.0)
+            category_data[dimension].append((value, effective_weight))
 
-    return {
-        dimension: round(sum(values) / len(values))
-        for dimension, values in score_buckets.items()
-    }
+    scores = {}
+    for category, values in category_data.items():
+        weighted_sum = sum(v * w for v, w in values)
+        total_weight = sum(w for _, w in values)
+        scores[category] = round(weighted_sum / total_weight) if total_weight > 0 else 0
+
+    return scores
 
 
 def compute_overall_score(score_breakdown: dict[str, int]) -> int:
-    available_weight = sum(WEIGHTS[dim] for dim in score_breakdown)
+    weights = get_dimension_weights()
+    available_weight = sum(weights[dim] for dim in score_breakdown)
     if available_weight == 0:
         return 0
 
-    weighted_total = sum(score_breakdown[dim] * WEIGHTS[dim] for dim in score_breakdown)
+    weighted_total = sum(score_breakdown[dim] * weights[dim] for dim in score_breakdown)
     return round(weighted_total / available_weight)
 
 
-def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakdown: dict[str, int]) -> list[str]:
+def compute_global_confidence(successful: Sequence[ProviderResult]) -> int:
+    total_weighted_conf = 0.0
+    total_weight = 0.0
+
+    for provider in successful:
+        coefficient = get_provider_coefficient(provider.provider)
+        coverage_map = get_provider_dimensions(provider.provider)
+        avg_coverage = sum(coverage_map.values()) / len(coverage_map) if coverage_map else 50
+        effective_weight = coefficient * (avg_coverage / 100.0)
+        total_weighted_conf += provider.confidence * effective_weight
+        total_weight += effective_weight
+
+    if total_weight == 0:
+        return 0
+    return round(total_weighted_conf / total_weight)
+
+
+def build_trust_reasons(
+    provider_results: list[ProviderResult],
+    score_breakdown: dict[str, int],
+    successful: list[ProviderResult] | None = None,
+) -> list[str]:
     reasons: list[str] = []
 
     if not provider_results:
         return ["No providers were available for this analysis."]
 
-    errors = [result.provider for result in provider_results if result.status != "success"]
+    errors = [r.provider for r in provider_results if r.status == "error"]
+    no_data = [r.provider for r in provider_results if r.status == "no_data"]
     if errors:
-        reasons.append("Some providers did not return full data.")
+        reasons.append(f"Some providers encountered errors: {', '.join(errors)}.")
+    if no_data:
+        reasons.append(f"Some providers had no data available: {', '.join(no_data)}.")
+
+    if successful is not None:
+        reasons.append(f"{len(successful)}/{len(provider_results)} providers completed successfully.")
 
     if score_breakdown.get("https", 0) >= 80:
         reasons.append("The URL uses HTTPS.")
@@ -64,6 +92,11 @@ def build_trust_reasons(provider_results: Iterable[ProviderResult], score_breakd
         reasons.append("The URL has a good reputation signal.")
     elif "reputation" in score_breakdown:
         reasons.append("The URL has weak reputation signals.")
+
+    if score_breakdown.get("privacy", 0) >= 80:
+        reasons.append("The page respects visitor privacy with minimal tracking.")
+    elif "privacy" in score_breakdown:
+        reasons.append("The page contains trackers or scripts that may compromise privacy.")
 
     if score_breakdown.get("malware", 0) < 60:
         reasons.append("Suspicious URL patterns were detected that lower the malware score.")

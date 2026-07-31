@@ -2,25 +2,32 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
-from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from .config import API_KEYS_SECRET
 
-def _api_keys_secret_key() -> bytes:
-    secret = os.getenv("API_KEYS_SECRET") or os.getenv("JWT_SECRET") or "url-trust-analyzer-default-secret"
-    if not isinstance(secret, bytes):
-        secret = secret.encode("utf-8")
-    return base64.urlsafe_b64encode(hashlib.sha256(secret).digest())
+# Lazily initialised — computed once from the environment secret and cached
+# for the lifetime of the process. Avoids re-hashing on every encrypt/decrypt.
+_fernet_instance: Fernet | None = None
+
+
+def _get_fernet() -> Fernet:
+    global _fernet_instance
+    if _fernet_instance is None:
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(API_KEYS_SECRET.encode("utf-8")).digest()
+        )
+        _fernet_instance = Fernet(key)
+    return _fernet_instance
 
 
 def encrypt_api_key(value: str) -> str:
-    return Fernet(_api_keys_secret_key()).encrypt(value.encode("utf-8")).decode("utf-8")
+    return _get_fernet().encrypt(value.encode("utf-8")).decode("utf-8")
 
 
 def decrypt_api_key(token: str) -> str | None:
     try:
-        return Fernet(_api_keys_secret_key()).decrypt(token.encode("utf-8")).decode("utf-8")
+        return _get_fernet().decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken:
         return None

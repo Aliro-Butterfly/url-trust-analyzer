@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 
-JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(32)
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+from .config import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    AUTH_COOKIE_NAME,
+    JWT_ALGORITHM,
+    JWT_SECRET,
+)
+
 PASSWORD_ITERATIONS = 200_000
 SALT_LENGTH = 16
-AUTH_COOKIE_NAME = "auth_token"
+
+__all__ = [
+    "AUTH_COOKIE_NAME",
+    "hash_password",
+    "verify_password",
+    "create_access_token",
+    "decode_access_token",
+]
 
 
 def hash_password(password: str) -> str:
@@ -44,14 +55,22 @@ def verify_password(plain_password: str, stored_hash: str) -> bool:
         return False
 
 
-def create_access_token(username: str, expires_delta: timedelta | None = None) -> str:
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+def create_access_token(
+    username: str,
+    expires_delta: timedelta | None = None,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
     payload: dict[str, Any] = {"sub": username, "exp": expire}
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError:
+    except InvalidTokenError:
         return None

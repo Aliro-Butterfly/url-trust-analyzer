@@ -1,0 +1,17 @@
+{
+  "name": "url-trust-analyzer",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "powershell -ExecutionPolicy Bypass -File scripts/start.ps1",
+    "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
+    "dev:backend": "cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:frontend": "cd frontend && npm run dev -- --host 127.0.0.1 --port 5173",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "cd frontend && npm run build",
+    "test": "python -m pytest backend/tests"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
+  }
+}

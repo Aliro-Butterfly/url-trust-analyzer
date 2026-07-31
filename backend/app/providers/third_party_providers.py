@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import urllib.parse
 from typing import Any
@@ -7,43 +9,26 @@ from typing import Any
 import httpx
 
 from .base import Provider
+from .utils import _clamp, _extract_domain, _fetch_text, _user_agent
+
+logger = logging.getLogger(__name__)
 
 
-def _extract_domain(url: str) -> str | None:
-    try:
-        parsed = httpx.URL(url)
-    except Exception:
-        return None
-    return parsed.host
-
-
-def _user_agent() -> str:
-    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-
-async def _fetch_text(url: str, timeout: float = 10.0) -> str | None:
-    try:
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _user_agent()}) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.text
-    except Exception:
-        return None
-
-
-def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str]:
+def _score_from_page(content: str, positive: list[str], negative: list[str]) -> tuple[int, str, bool]:
     lower = content.lower()
-    if any(token in lower for token in negative):
-        return 28, "The scraped page contains negative reputation indicators."
 
     if any(token in lower for token in positive):
-        return 90, "The scraped page contains positive reputation indicators."
+        return 90, "The scraped page contains positive reputation indicators.", True
 
-    return 60, "The scraped page did not contain a clear verdict."
+    for token in negative:
+        idx = lower.find(token)
+        while idx != -1:
+            before = lower[max(0, idx - 6) : idx].strip()
+            if before and before.split()[-1] not in ("no", "not", "non", "without"):
+                return 28, f"The scraped page contains negative reputation indicators ({token}).", True
+            idx = lower.find(token, idx + 1)
 
-
-def _clamp(value: int) -> int:
-    return max(0, min(100, value))
+    return 60, "The scraped page did not contain a clear verdict.", False
 
 
 class VirusTotalProvider(Provider):
@@ -66,10 +51,20 @@ class VirusTotalProvider(Provider):
                     resource_id = create_payload.get("data", {}).get("id")
 
                     if resource_id:
-                        report_response = await client.get(f"https://www.virustotal.com/api/v3/urls/{resource_id}")
-                        report_response.raise_for_status()
-                        payload = report_response.json()
-                        stats = payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                        for _ in range(6):
+                            analysis_response = await client.get(f"https://www.virustotal.com/api/v3/analyses/{resource_id}")
+                            analysis_response.raise_for_status()
+                            analysis_payload = analysis_response.json()
+                            analysis_status = analysis_payload.get("data", {}).get("attributes", {}).get("status")
+                            if analysis_status == "completed":
+                                break
+                            await asyncio.sleep(2)
+                        if analysis_status == "completed":
+                            stats = analysis_payload.get("data", {}).get("attributes", {}).get("stats", {})
+                        else:
+                            stats = analysis_payload.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                        if not stats:
+                            stats = {}
                         positives = stats.get("malicious", 0) + stats.get("suspicious", 0)
                         total = sum(stats.values())
                         score = _clamp(100 - positives * 15)
@@ -88,8 +83,11 @@ class VirusTotalProvider(Provider):
                             },
                             "dimensions": {"threat_intel": score},
                         }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    logger.warning("VirusTotal API call failed: %s | body=%s", exc, exc.response.text[:500])
+                else:
+                    logger.warning("VirusTotal API call failed: %s", exc)
 
         page = await _fetch_text(f"https://www.virustotal.com/gui/url/search?query={entity}")
         if not page:
@@ -100,22 +98,22 @@ class VirusTotalProvider(Provider):
                 "confidence": 35,
                 "summary": "VirusTotal scraping did not return a usable page.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 55},
+                "dimensions": {},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["no threats detected", "harmless", "clean site", "detected by 0"],
             negative=["malicious", "phishing", "suspicious", "unsafe", "threat"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "VirusTotal reputation was evaluated using a best-effort page scrape.",
+            "summary": "VirusTotal reputation was evaluated using a best-effort page scrape." if has_verdict else "VirusTotal scraping did not yield a clear verdict.",
             "details": {"source": "scrape", "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -171,8 +169,12 @@ class GoogleSafeBrowsingProvider(Provider):
                         "details": {"matches": []},
                         "dimensions": {"threat_intel": 92},
                     }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    body = exc.response.text[:500]
+                    logger.warning("Google Safe Browsing API call failed: %s | body=%s", exc, body)
+                else:
+                    logger.warning("Google Safe Browsing API call failed: %s", exc)
 
         page = await _fetch_text(
             f"https://transparencyreport.google.com/safe-browsing/search?url={urllib.parse.quote(url, safe='')}",
@@ -186,22 +188,22 @@ class GoogleSafeBrowsingProvider(Provider):
                 "confidence": 40,
                 "summary": "Google Safe Browsing lookup did not return usable data.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 58},
+                "dimensions": {},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["no unsafe content", "all clear", "no unsafe content found"],
             negative=["unsafe", "malicious", "phishing", "deceptive"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 72,
-            "summary": "Google Safe Browsing reputation was estimated from the public report page.",
+            "summary": "Google Safe Browsing reputation was estimated from the public report page." if has_verdict else "Google Safe Browsing scraping did not yield a clear verdict.",
             "details": {"source": "scrape", "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -222,7 +224,7 @@ class URLScanProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        api_key = os.getenv("URLSCAN_API_KEY")
+        api_key = api_key or os.getenv("URLSCAN_API_KEY")
         if api_key:
             try:
                 async with httpx.AsyncClient(timeout=20.0, headers={"API-Key": api_key}) as client:
@@ -245,8 +247,11 @@ class URLScanProvider(Provider):
                             "details": {"verdicts": verdicts},
                             "dimensions": {"threat_intel": score},
                         }
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    logger.warning("URLScan API call failed: %s | body=%s", exc, exc.response.text[:500])
+                else:
+                    logger.warning("URLScan API call failed: %s", exc)
 
         page = await _fetch_text(f"https://urlscan.io/domain/{urllib.parse.quote(domain)}")
         if not page:
@@ -261,20 +266,20 @@ class URLScanProvider(Provider):
             }
 
         if "no results" in page.lower() or "no scans" in page.lower():
-            score = 78
+            has_verdict = False
             note = "URLScan has no public scans for this domain yet."
         else:
-            score = 68
+            has_verdict = True
             note = "URLScan public scan results were found for this domain."
 
         return {
             "provider": self.name,
-            "status": "success",
-            "score": score,
+            "status": "success" if has_verdict else "no_data",
+            "score": 78,
             "confidence": 68,
-            "summary": "URLScan reputation was estimated from public scan data.",
+            "summary": "URLScan reputation was estimated from public scan data." if has_verdict else "URLScan scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": 78} if has_verdict else {},
         }
 
 
@@ -291,7 +296,7 @@ class UrlVoidProvider(Provider):
                 "confidence": 25,
                 "summary": "The URL is invalid.",
                 "details": {"url": url},
-                "dimensions": {"threat_intel": 50},
+                "dimensions": {},
             }
 
         page = await _fetch_text(f"https://www.urlvoid.com/scan/{urllib.parse.quote(domain)}")
@@ -306,19 +311,23 @@ class UrlVoidProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        score, note = _score_from_page(
-            page,
-            positive=["not blacklisted", "no blacklist detected", "no threats found"],
-            negative=["blacklisted", "malicious", "phishing", "scam"],
-        )
+        lower = page.lower()
+        clean_count = lower.count("text-success") + lower.count("icon-check")
+        dirty_count = lower.count("text-danger") + lower.count("icon-ban") + lower.count("icon-times")
+        if dirty_count == 0 and clean_count > 0:
+            score, note, has_verdict = 90, "URLVoid detected no blacklisting against this domain.", True
+        elif dirty_count > 0 and clean_count == 0:
+            score, note, has_verdict = 28, f"URLVoid detected {dirty_count} blacklist(s) flagging this domain.", True
+        else:
+            score, note, has_verdict = 60, "URLVoid scraping did not yield a clear verdict.", False
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "URLVoid reputation was estimated from the public site scan page.",
-            "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "summary": note,
+            "details": {"domain": domain, "detections": dirty_count, "blacklists_checked": clean_count + dirty_count},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -350,19 +359,19 @@ class SucuriProvider(Provider):
                 "dimensions": {"threat_intel": 55},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["clean site", "no malware found", "site check clean"],
             negative=["malware", "phishing", "blacklisted", "injected"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "Sucuri site scan was estimated using the public result page.",
+            "summary": "Sucuri site scan was estimated using the public result page." if has_verdict else "Sucuri scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
@@ -397,51 +406,64 @@ class TalosProvider(Provider):
                 "dimensions": {"threat_intel": 50},
             }
 
-        score, note = _score_from_page(
+        score, note, has_verdict = _score_from_page(
             page,
             positive=["good", "medium", "known good"],
             negative=["poor", "very poor", "bad", "unverified"],
         )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 72,
-            "summary": "Cisco Talos reputation was estimated from the public lookup page.",
+            "summary": "Cisco Talos reputation was estimated from the public lookup page." if has_verdict else "Cisco Talos scraping did not yield a clear verdict.",
             "details": {"domain": domain, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 
 class ScamDocProvider(Provider):
-    name = "ScamDoc"
+    name = "ScamAdviser"
 
     async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
-        page = await _fetch_text(f"https://www.scamdoc.com/check?url={urllib.parse.quote(url, safe='')}" )
+        page = await _fetch_text(
+            f"https://www.scamadviser.com/check-website/{urllib.parse.quote(urllib.parse.urlparse(url).hostname or url, safe='')}",
+            timeout=15.0,
+        )
         if not page:
             return {
                 "provider": self.name,
                 "status": "error",
                 "score": 55,
                 "confidence": 35,
-                "summary": "ScamDoc scraping failed.",
+                "summary": "ScamAdviser scraping failed.",
                 "details": {"url": url},
                 "dimensions": {"threat_intel": 55},
             }
 
-        score, note = _score_from_page(
-            page,
-            positive=["not a scam", "safe site", "trustworthy"],
-            negative=["scam", "fraud", "unsafe", "dangerous"],
-        )
+        lower = page.lower()
+        if "trust" in lower and "very low" not in lower and "high risk" not in lower:
+            has_verdict = True
+            score = 92
+            note = "ScamAdviser indicates this site is trustworthy."
+        elif "very low" in lower or "high risk" in lower or "untrustworthy" in lower:
+            has_verdict = True
+            score = 25
+            note = "ScamAdviser indicates this site has a low trust rating."
+        else:
+            score, note, has_verdict = _score_from_page(
+                page,
+                positive=["trustworthy", "safe", "legitimate", "trust score"],
+                negative=["scam", "fraud", "unsafe", "dangerous", "high risk"],
+            )
         return {
             "provider": self.name,
-            "status": "success",
+            "status": "success" if has_verdict else "no_data",
             "score": score,
             "confidence": 70,
-            "summary": "ScamDoc reputation was estimated from the public checker page.",
+            "summary": "ScamAdviser trust rating was evaluated using the public checker page." if has_verdict else "ScamAdviser scraping did not yield a clear verdict.",
             "details": {"url": url, "note": note},
-            "dimensions": {"threat_intel": score},
+            "dimensions": {"threat_intel": score} if has_verdict else {},
         }
 
 

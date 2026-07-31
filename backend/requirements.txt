@@ -3,5 +3,6 @@ uvicorn[standard]
 httpx
 pydantic
 pytest
-python-jose[cryptography]
+PyJWT
 cryptography
+python-dotenv

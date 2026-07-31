@@ -5,11 +5,14 @@ from typing import Any
 
 import httpx
 
+from .base import Provider
 
-class IcannProvider:
+
+class IcannProvider(Provider):
     name = "ICANN/RDAP"
+    api_key_name = None
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         domain = self._extract_domain(url)
         if not domain:
             return {
@@ -22,7 +25,7 @@ class IcannProvider:
             }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.get(f"https://rdap.org/domain/{domain}")
                 response.raise_for_status()
                 payload = response.json()

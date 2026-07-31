@@ -11,6 +11,14 @@ from .third_party_providers import (
     UrlVoidProvider,
     VirusTotalProvider,
 )
+from .free_providers import (
+    AbuseIPDBProvider,
+    AlienVaultOTXProvider,
+    CertificateTransparencyProvider,
+    HackerTargetProvider,
+    MozillaObservatoryProvider,
+    PrivacyProvider,
+)
 
 __all__ = [
     "IcannProvider",
@@ -24,4 +32,10 @@ __all__ = [
     "GoogleSafeBrowsingProvider",
     "ScamDocProvider",
     "URLScanProvider",
+    "HackerTargetProvider",
+    "AlienVaultOTXProvider",
+    "AbuseIPDBProvider",
+    "MozillaObservatoryProvider",
+    "CertificateTransparencyProvider",
+    "PrivacyProvider",
 ]

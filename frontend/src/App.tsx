@@ -1,264 +1,125 @@
-import { FormEvent, useEffect, useState } from "react";
+﻿import { FormEvent, useEffect, useState } from "react";
 import logo from "./assets/logo.svg";
-
-interface ProviderResult {
-  provider: string;
-  status: string;
-  score: number;
-  confidence: number;
-  summary: string;
-  details: Record<string, unknown>;
-}
-
-interface AnalysisResponse {
-  url: string;
-  overall_score: number;
-  confidence: number;
-  reasons: string[];
-  score_breakdown: Record<string, number>;
-  results: ProviderResult[];
-}
-
-interface HistoryItem {
-  id: number;
-  url: string;
-  overall_score: number;
-  confidence: number;
-  created_at: string;
-  report: AnalysisResponse;
-}
-
-interface AuthResponse {
-  username: string;
-}
+import { AdminPanel } from "./components/AdminPanel";
+import { AnalysisForm } from "./components/AnalysisForm";
+import { ApiKeysForm } from "./components/ApiKeysForm";
+import { AuthForm } from "./components/AuthForm";
+import { HistoryList } from "./components/HistoryList";
+import type { AdminConfig, ApiKeysStatus, ApiResponse, AuthResponse, HistoryItem } from "./types";
 
 function App() {
-  const [url, setUrl] = useState("https://example.com");
-  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [user, setUser] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [apiKeyStatus, setApiKeyStatus] = useState({
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeysStatus>({
     has_urlscan: false,
     has_google_safebrowsing: false,
     has_virustotal: false,
+    has_abuseipdb: false,
   });
-  const [apiKeyLoading, setApiKeyLoading] = useState(false);
-  const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
-  const [urlscanKey, setUrlscanKey] = useState("");
-  const [googleSafeBrowsingKey, setGoogleSafeBrowsingKey] = useState("");
-  const [virusTotalKey, setVirusTotalKey] = useState("");
+  const [adminConfig, setAdminConfig] = useState<AdminConfig | null>(null);
+  const [adminMessage, setAdminMessage] = useState<string | null>(null);
 
-  const loadUser = async () => {
-    try {
-      const response = await fetch("/api/auth/me", { credentials: "include" });
-      if (!response.ok) {
-        setUser(null);
-        return;
-      }
-      const payload = (await response.json()) as AuthResponse;
-      setUser(payload.username);
-    } catch (err) {
-      setUser(null);
-    }
-  };
-
-  const loadHistory = async () => {
+  const loadHistory = async (): Promise<void> => {
     try {
       const response = await fetch("/api/history", { credentials: "include" });
-      if (!response.ok) {
-        setHistory([]);
-        return;
-      }
-      const historyPayload = await response.json();
-      setHistory(historyPayload);
-    } catch (err) {
-      console.warn("Unable to load history", err);
+      if (!response.ok) { setHistory([]); return; }
+      const envelope = (await response.json()) as ApiResponse<HistoryItem[]>;
+      setHistory(envelope.success && envelope.data ? envelope.data : []);
+    } catch {
       setHistory([]);
     }
   };
 
-  const loadApiKeys = async () => {
-    setApiKeyMessage(null);
+  const loadApiKeys = async (): Promise<void> => {
     try {
       const response = await fetch("/api/auth/api-keys", { credentials: "include" });
-      if (!response.ok) {
-        setApiKeyStatus({ has_urlscan: false, has_google_safebrowsing: false, has_virustotal: false });
-        return;
-      }
-      const payload = await response.json();
-      setApiKeyStatus(payload);
-    } catch (err) {
-      console.warn("Unable to load API key status", err);
-    }
+      if (!response.ok) return;
+      const envelope = (await response.json()) as ApiResponse<ApiKeysStatus>;
+      if (envelope.success && envelope.data) setApiKeyStatus(envelope.data);
+    } catch { /* silently ignore */ }
   };
 
-  useEffect(() => {
-    loadUser();
-    loadHistory();
-  }, []);
-
-  useEffect(() => {
-    if (user) {
-      loadApiKeys();
-    }
-  }, [user]);
-
-  const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setLoading(true);
-    setAuthError(null);
-
+  const loadAdminConfig = async (): Promise<void> => {
     try {
-      const response = await fetch(`/api/auth/${authMode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
+      const response = await fetch("/api/admin/config", { credentials: "include" });
+      if (!response.ok) { setIsAdmin(false); return; }
+      const envelope = (await response.json()) as ApiResponse<AdminConfig>;
+      if (envelope.success && envelope.data) {
+        setAdminConfig(envelope.data);
+      } else {
+        setIsAdmin(false);
       }
-
-      const payload = (await response.json()) as AuthResponse;
-      setUser(payload.username);
-      setUsername("");
-      setPassword("");
-      await loadHistory();
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : "Authentication error occurred.");
-    } finally {
-      setLoading(false);
+    } catch {
+      setIsAdmin(false);
     }
   };
 
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+  const handleAuthSuccess = async (payload: AuthResponse): Promise<void> => {
+    setUser(payload.username);
+    setIsAdmin(payload.is_admin === true);
+    if (payload.is_admin) {
+      await loadAdminConfig();
+    } else {
+      await Promise.all([loadHistory(), loadApiKeys()]);
+    }
+  };
+
+  const handleLogout = async (): Promise<void> => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
-    setAnalysis(null);
+    setIsAdmin(false);
+    setAdminConfig(null);
     setHistory([]);
   };
 
-  const downloadReport = async () => {
-    if (!analysis) {
-      return;
-    }
-
-    const reportLines: string[] = [
-      `URL: ${analysis.url}`,
-      `Overall score: ${analysis.overall_score} / 100`,
-      `Confidence: ${analysis.confidence}%`,
-      "",
-      "Reasons:",
-      ...analysis.reasons.map((reason) => `- ${reason}`),
-      "",
-      "Score breakdown:",
-      ...Object.entries(analysis.score_breakdown).map(
-        ([dimension, value]) => `- ${dimension}: ${value}`
-      ),
-      "",
-      "Providers:",
-      ...analysis.results.flatMap((item) => [
-        `=== ${item.provider} ===`,
-        `Summary: ${item.summary}`,
-        `Score: ${item.score}`,
-        `Confidence: ${item.confidence}%`,
-        "",
-      ]),
-    ];
-
-    const blob = new Blob([reportLines.join("\n")], {
-      type: "text/plain;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${analysis.url.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_report.txt`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleApiKeysSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleAdminSave = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    setApiKeyLoading(true);
-    setApiKeyMessage(null);
-
+    setAdminMessage(null);
+    if (!adminConfig) return;
     try {
-      const response = await fetch("/api/auth/api-keys", {
+      const response = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          urlscan: urlscanKey || undefined,
-          google_safebrowsing: googleSafeBrowsingKey || undefined,
-          virustotal: virusTotalKey || undefined,
+          dimension_weights: adminConfig.dimension_weights,
+          providers: adminConfig.providers,
         }),
       });
-
-      if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
+      const envelope = (await response.json()) as ApiResponse<AdminConfig>;
+      if (!response.ok || !envelope.success) {
+        const msg = envelope.errors?.length
+          ? envelope.errors.join("; ")
+          : envelope.message || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
-
-      const payload = await response.json();
-      setApiKeyStatus(payload);
-      setUrlscanKey("");
-      setGoogleSafeBrowsingKey("");
-      setVirusTotalKey("");
-      setApiKeyMessage("API keys updated successfully. Only you can use these keys.");
+      if (envelope.data) setAdminConfig(envelope.data);
+      setAdminMessage("Configuration saved successfully.");
     } catch (err) {
-      setApiKeyMessage(err instanceof Error ? err.message : "Unable to update API keys.");
-    } finally {
-      setApiKeyLoading(false);
+      setAdminMessage(err instanceof Error ? err.message : "Save failed");
     }
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
-    setAnalysis(null);
-
-    if (!user) {
-      setError("Please log in to run an analysis.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ url }),
-      });
-
-      if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(payload.detail || `HTTP ${response.status}`);
-      }
-
-      const payload = (await response.json()) as AnalysisResponse;
-      setAnalysis(payload);
-      await loadHistory();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const response = await fetch("/api/auth/me", { credentials: "include" });
+        if (!response.ok) return;
+        const envelope = (await response.json()) as ApiResponse<AuthResponse>;
+        if (!envelope.success || !envelope.data) return;
+        const payload = envelope.data;
+        setUser(payload.username);
+        setIsAdmin(payload.is_admin === true);
+        if (payload.is_admin) {
+          await loadAdminConfig();
+        } else {
+          await Promise.all([loadHistory(), loadApiKeys()]);
+        }
+      } catch { /* not authenticated */ }
+    };
+    init();
+  }, []);
 
   return (
     <div className="app-shell">
@@ -274,178 +135,48 @@ function App() {
 
       <main>
         {!user ? (
-          <section className="result-card">
-            <h2>User Login</h2>
-            <form onSubmit={handleAuthSubmit} className="search-form">
-              <input
-                type="text"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="Username"
-                required
+          <AuthForm onSuccess={handleAuthSuccess} />
+        ) : isAdmin ? (
+          <>
+            <section className="result-card">
+              <div className="result-header">
+                <div>
+                  <p>Signed in as</p>
+                  <strong>{user} (admin)</strong>
+                </div>
+                <div>
+                  <button type="button" onClick={handleLogout}>Logout</button>
+                </div>
+              </div>
+            </section>
+            {adminConfig && (
+              <AdminPanel
+                config={adminConfig}
+                onChange={setAdminConfig}
+                onSave={handleAdminSave}
+                message={adminMessage}
               />
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password"
-                required
-              />
-              <button type="submit" disabled={loading}>
-                {loading ? "Working..." : authMode === "login" ? "Login" : "Register"}
-              </button>
-            </form>
-
-            <div className="provider-metrics">
-              <button type="button" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}> 
-                {authMode === "login" ? "Create account" : "Switch to login"}
-              </button>
-            </div>
-            {authError && <div className="toast error">{authError}</div>}
-          </section>
+            )}
+          </>
         ) : (
-          <section className="result-card">
-            <div className="result-header">
-              <div>
-                <p>Signed in as</p>
-                <strong>{user}</strong>
+          <>
+            <section className="result-card">
+              <div className="result-header">
+                <div>
+                  <p>Signed in as</p>
+                  <strong>{user}</strong>
+                </div>
+                <div>
+                  <button type="button" onClick={handleLogout}>Logout</button>
+                </div>
               </div>
-              <div>
-                <button type="button" onClick={handleLogout}>
-                  Logout
-                </button>
-              </div>
-            </div>
-          </section>
-          <section className="result-card">
-            <h2>API Keys</h2>
-            <p className="subtext">Store your provider API keys securely for your account. Only you can use these keys.</p>
-            <form onSubmit={handleApiKeysSubmit} className="search-form">
-              <input
-                type="password"
-                value={urlscanKey}
-                onChange={(event) => setUrlscanKey(event.target.value)}
-                placeholder={apiKeyStatus.has_urlscan ? "URLScan key stored — enter new to replace" : "URLScan API key"}
-              />
-              <input
-                type="password"
-                value={googleSafeBrowsingKey}
-                onChange={(event) => setGoogleSafeBrowsingKey(event.target.value)}
-                placeholder={apiKeyStatus.has_google_safebrowsing ? "Google Safe Browsing key stored — enter new to replace" : "Google Safe Browsing API key"}
-              />
-              <input
-                type="password"
-                value={virusTotalKey}
-                onChange={(event) => setVirusTotalKey(event.target.value)}
-                placeholder={apiKeyStatus.has_virustotal ? "VirusTotal key stored — enter new to replace" : "VirusTotal API key"}
-              />
-              <button type="submit" disabled={apiKeyLoading}>
-                {apiKeyLoading ? "Saving..." : "Save API Keys"}
-              </button>
-            </form>
-            {apiKeyMessage && <div className="toast success">{apiKeyMessage}</div>}
-          </section>        )}
-
-        {user && (
-          <section className="result-card">
-            <form onSubmit={handleSubmit} className="search-form">
-              <input
-                type="url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://example.com"
-                required
-              />
-              <button type="submit" disabled={loading}>
-                {loading ? "Analyse en cours…" : "Analyser"}
-              </button>
-            </form>
-
-            {error && <div className="toast error">{error}</div>}
-
-            {analysis && (
-              <>
-                <div className="button-row">
-                  <button type="button" onClick={downloadReport} className="secondary-button">
-                    Create Report
-                  </button>
-                </div>
-                <div className="result-header">
-                  <div>
-                    <p>Analyzed URL</p>
-                    <strong>{analysis.url}</strong>
-                  </div>
-                  <div>
-                    <p>Overall score</p>
-                    <strong>{analysis.overall_score} / 100</strong>
-                  </div>
-                  <div>
-                    <p>Confidence</p>
-                    <strong>{analysis.confidence}%</strong>
-                  </div>
-                </div>
-
-                <div className="analysis-reasons">
-                  <h2>Why?</h2>
-                  <ul>
-                    {analysis.reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="breakdown-card">
-                  <h2>Score Breakdown</h2>
-                  <div className="breakdown-list">
-                    {Object.entries(analysis.score_breakdown).map(([dimension, value]) => (
-                      <div key={dimension} className="breakdown-item">
-                        <span>{dimension}</span>
-                        <strong>{value}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="provider-list">
-                  {analysis.results.map((item) => (
-                    <article key={item.provider} className="provider-card">
-                      <h2>{item.provider}</h2>
-                      <p>{item.summary}</p>
-                      <div className="provider-metrics">
-                        <span>Score: {item.score}</span>
-                        <span>Confidence: {item.confidence}%</span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </>
-            )}
-          </section>
+            </section>
+            <ApiKeysForm status={apiKeyStatus} onSaved={setApiKeyStatus} />
+            <AnalysisForm onResult={loadHistory} />
+          </>
         )}
 
-        {user && (
-          <section className="history-card">
-            <h2>Analysis history</h2>
-            {history.length === 0 ? (
-              <p>No saved analysis yet.</p>
-            ) : (
-              <ul className="history-list">
-                {history.map((item) => (
-                  <li key={item.id} className="history-item">
-                    <div>
-                      <strong>{item.url}</strong>
-                      <span>{new Date(item.created_at).toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span>Score: {item.overall_score}</span>
-                      <span>Confidence: {item.confidence}%</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
+        {user && <HistoryList items={history} />}
       </main>
     </div>
   );

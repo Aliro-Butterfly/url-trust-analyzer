@@ -7,6 +7,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 
 # Node
 node_modules/
@@ -23,3 +24,8 @@ Thumbs.db
 
 # SQLite database files
 *.db
+*.db-wal
+*.db-shm
+
+# Runtime logs
+*.log

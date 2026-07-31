@@ -10,7 +10,7 @@ from .base import Provider
 class DnsProvider(Provider):
     name = "DNS Infrastructure"
 
-    async def analyze(self, url: str) -> dict[str, Any]:
+    async def analyze(self, url: str, api_key: str | None = None) -> dict[str, Any]:
         domain = self._extract_domain(url)
         if not domain:
             return {
