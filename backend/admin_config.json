@@ -67,12 +67,6 @@
         "blacklists": 55
       }
     },
-    "Cisco Talos": {
-      "coefficient": 1.1,
-      "dimensions": {
-        "threat_intel": 55
-      }
-    },
     "URLScan": {
       "coefficient": 1.3,
       "dimensions": {
@@ -102,7 +96,6 @@
     "URL Properties": {
       "coefficient": 0.8,
       "dimensions": {
-        "https": 40,
         "infrastructure": 30
       }
     },
