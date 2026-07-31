@@ -43,6 +43,10 @@ DEFAULT_PROVIDERS = {
         "coefficient": 1.3,
         "dimensions": {"malware": 60, "blacklists": 55},
     },
+    "Cisco Talos": {
+        "coefficient": 1.3,
+        "dimensions": {"threat_intel": 60, "reputation": 55},
+    },
     "URLScan": {
         "coefficient": 1.3,
         "dimensions": {"threat_intel": 55, "infrastructure": 50},
