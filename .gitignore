@@ -29,3 +29,4 @@ Thumbs.db
 
 # Runtime logs
 *.log
+backend/.pytest_cache/
