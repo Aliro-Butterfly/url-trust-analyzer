@@ -6,18 +6,20 @@ interface Props {
   onSaved: (status: ApiKeysStatus) => void;
 }
 
+type ToastState = { message: string; kind: "success" | "error" } | null;
+
 export function ApiKeysForm({ status, onSaved }: Props) {
   const [urlscanKey, setUrlscanKey] = useState("");
   const [googleKey, setGoogleKey] = useState("");
   const [vtKey, setVtKey] = useState("");
   const [abuseipdbKey, setAbuseipdbKey] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
-    setMessage(null);
+    setToast(null);
 
     try {
       const response = await fetch("/api/auth/api-keys", {
@@ -45,10 +47,10 @@ export function ApiKeysForm({ status, onSaved }: Props) {
       setGoogleKey("");
       setVtKey("");
       setAbuseipdbKey("");
-      setMessage("API keys updated successfully. Only you can use these keys.");
+      setToast({ message: "API keys updated successfully. Only you can use these keys.", kind: "success" });
       onSaved(payload);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Unable to update API keys.");
+      setToast({ message: err instanceof Error ? err.message : "Unable to update API keys.", kind: "error" });
     } finally {
       setLoading(false);
     }
@@ -93,7 +95,7 @@ export function ApiKeysForm({ status, onSaved }: Props) {
           {loading ? "Saving..." : "Save API Keys"}
         </button>
       </form>
-      {message && <div className="toast success">{message}</div>}
+      {toast && <div className={`toast ${toast.kind}`}>{toast.message}</div>}
     </section>
   );
 }

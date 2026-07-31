@@ -26,6 +26,7 @@ from ..providers import (
 from ..providers.base import Provider
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
 from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_global_confidence, compute_overall_score
+from .cache import AnalysisCache
 
 # Hard cap per individual provider. Prevents a single slow provider from
 # blocking all others when they run concurrently via asyncio.gather.
@@ -53,6 +54,7 @@ class AnalyzerService:
             CertificateTransparencyProvider(),
             PrivacyProvider(),
         ]
+        self._cache = AnalysisCache()
 
     async def _run_provider(
         self, provider: Provider, url: str, api_key: str | None
@@ -87,6 +89,14 @@ class AnalyzerService:
     async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
         normalized_url = str(request.url).rstrip("/")
 
+        # Cache lookup — only effective when no user-specific API keys are provided,
+        # because different API keys can yield different results for the same URL.
+        use_cache = not api_keys
+        if use_cache:
+            cached = await self._cache.get(normalized_url)
+            if cached is not None:
+                return cached
+
         tasks = []
         for provider in self.providers:
             provider_api_key: str | None = None
@@ -116,7 +126,7 @@ class AnalyzerService:
         average_confidence = compute_global_confidence(successful)
         reasons = build_trust_reasons(provider_results, score_breakdown, successful)
 
-        return AnalysisResponse(
+        response = AnalysisResponse(
             url=normalized_url,
             overall_score=overall_score,
             confidence=average_confidence,
@@ -124,3 +134,8 @@ class AnalyzerService:
             score_breakdown=score_breakdown,
             results=provider_results,
         )
+
+        if use_cache:
+            await self._cache.set(normalized_url, response)
+
+        return response
