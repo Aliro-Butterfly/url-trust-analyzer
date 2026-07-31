@@ -1,8 +1,0 @@
-WARNING:app.providers.third_party_providers:VirusTotal API call failed: Client error '401 Unauthorized' for url 'https://www.virustotal.com/api/v3/urls'
-For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
-WARNING:app.providers.third_party_providers:Google Safe Browsing API call failed: Client error '400 Bad Request' for url 'https://safebrowsing.googleapis.com/v4/threatMatches:find?key=TESTGSB456'
-For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
-WARNING:app.providers.third_party_providers:URLScan API call failed: Client error '400 Bad Request' for url 'https://urlscan.io/api/v1/search/?q=domain:example.com&size=1'
-For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
-2026-07-31 11:53:56,291 ERROR    backend.app.main: Unhandled exception on POST /analyze: table history has no column named processing_time_ms
-2026-07-31 11:55:19,306 ERROR    backend.app.main: Unhandled exception on POST /analyze: table history has no column named processing_time_ms
