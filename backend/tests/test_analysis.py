@@ -144,7 +144,7 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     payload = response.json()
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 50
-    assert len(payload["results"]) == 11
+    assert len(payload["results"]) == 17
     assert any(result["provider"] == "VirusTotal" for result in payload["results"])
     assert any(result["provider"] == "Google Safe Browsing" for result in payload["results"])
     assert any(result["provider"] == "Cisco Talos" for result in payload["results"])
@@ -215,6 +215,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": False,
         "has_google_safebrowsing": False,
         "has_virustotal": False,
+        "has_abuseipdb": False,
     }
 
     update_response = client.put(
@@ -230,6 +231,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": True,
         "has_google_safebrowsing": True,
         "has_virustotal": True,
+        "has_abuseipdb": False,
     }
 
     second_client = TestClient(app)
@@ -240,6 +242,7 @@ def test_api_key_endpoints_are_user_scoped():
         "has_urlscan": False,
         "has_google_safebrowsing": False,
         "has_virustotal": False,
+        "has_abuseipdb": False,
     }
 
 

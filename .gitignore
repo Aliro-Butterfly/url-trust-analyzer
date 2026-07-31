@@ -24,3 +24,6 @@ Thumbs.db
 
 # SQLite database files
 *.db
+
+# Log files
+*.log

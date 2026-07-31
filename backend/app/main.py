@@ -1,6 +1,6 @@
+import hashlib
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ logging.basicConfig(
     ],
 )
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from .auth import AUTH_COOKIE_NAME, create_access_token, decode_access_token, hash_password, verify_password
 from .database import (
@@ -54,6 +55,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="URL Trust Analyzer - Backend", version="0.1.0", lifespan=lifespan)
 analyzer_service = AnalyzerService()
+
+ADMIN_COOKIE_NAME = "admin_token"
 
 
 def get_current_user(auth_token: str | None = Cookie(default=None)) -> dict[str, Any]:
@@ -113,7 +116,6 @@ def register(user: UserCreate) -> JSONResponse:
 
 @app.post("/auth/login", response_model=AuthResponse)
 def login(user: LoginRequest) -> JSONResponse:
-    import hashlib
     if not ADMIN_USERNAME or not ADMIN_PASSWORD:
         pass
     elif user.username == ADMIN_USERNAME and user.password == ADMIN_PASSWORD:
@@ -183,28 +185,24 @@ def history(current_user: dict[str, Any] = Depends(get_current_user)) -> list[Hi
     return fetch_history(username=current_user["username"])
 
 
-ADMIN_COOKIE_NAME = "admin_token"
-
-
 def require_admin(request: Request):
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin login not configured.")
     token = request.cookies.get(ADMIN_COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required.")
-    import hashlib
     expected = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
     if token != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token.")
     return True
 
 
-@dataclass
-class AdminLoginRequest:
+class AdminLoginRequest(BaseModel):
     username: str
     password: str
 
 
-@dataclass
-class AdminConfigUpdate:
+class AdminConfigUpdate(BaseModel):
     dimension_weights: dict[str, int] | None = None
     providers: dict[str, dict] | None = None
 
@@ -213,7 +211,6 @@ class AdminConfigUpdate:
 def admin_login(body: AdminLoginRequest):
     if body.username != ADMIN_USERNAME or body.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect admin credentials.")
-    import hashlib
     token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}".encode()).hexdigest()
     response = JSONResponse({"admin": True})
     response.set_cookie(ADMIN_COOKIE_NAME, token, httponly=True, samesite="strict", secure=False, max_age=3600, path="/")
