@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import time
+from dataclasses import dataclass
 from typing import Any
 
+from ..config import APP_VERSION, PROVIDER_TIMEOUT_SECONDS
 from ..providers import (
     AbuseIPDBProvider,
     AlienVaultOTXProvider,
@@ -25,12 +27,22 @@ from ..providers import (
 )
 from ..providers.base import Provider
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
-from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_global_confidence, compute_overall_score
+from ..scoring.scorer import (
+    build_trust_reasons,
+    compute_category_scores,
+    compute_global_confidence,
+    compute_overall_score,
+)
 from .cache import AnalysisCache
 
-# Hard cap per individual provider. Prevents a single slow provider from
-# blocking all others when they run concurrently via asyncio.gather.
-PROVIDER_TIMEOUT_SECONDS = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "30"))
+
+@dataclass
+class AnalysisResult:
+    response: AnalysisResponse
+    processing_time_ms: int
+    providers_count: int
+    from_cache: bool
+    algo_version: str
 
 
 class AnalyzerService:
@@ -59,7 +71,7 @@ class AnalyzerService:
     async def _run_provider(
         self, provider: Provider, url: str, api_key: str | None
     ) -> dict[str, Any]:
-        """Run a single provider with a hard timeout, always returning a valid result dict."""
+        """Run a single provider with a hard timeout, always returning a valid dict."""
         try:
             return await asyncio.wait_for(
                 provider.analyze(url, api_key),
@@ -86,38 +98,51 @@ class AnalyzerService:
                 "dimensions": {},
             }
 
-    async def analyze(self, request: AnalyzeRequest, api_keys: dict[str, str] | None = None) -> AnalysisResponse:
+    async def analyze(
+        self,
+        request: AnalyzeRequest,
+        api_keys: dict[str, str] | None = None,
+    ) -> AnalysisResult:
         normalized_url = str(request.url).rstrip("/")
 
-        # Cache lookup — only effective when no user-specific API keys are provided,
-        # because different API keys can yield different results for the same URL.
+        # Cache only when no user-specific API keys are provided —
+        # different keys can yield different results for the same URL.
         use_cache = not api_keys
         if use_cache:
-            cached = await self._cache.get(normalized_url)
-            if cached is not None:
-                return cached
+            entry = await self._cache.get(normalized_url)
+            if entry is not None:
+                return AnalysisResult(
+                    response=entry.result,
+                    processing_time_ms=0,
+                    providers_count=entry.providers_count,
+                    from_cache=True,
+                    algo_version=entry.algo_version,
+                )
 
-        tasks = []
-        for provider in self.providers:
-            provider_api_key: str | None = None
-            provider_api_name = getattr(provider, "api_key_name", None)
-            if provider_api_name and api_keys:
-                provider_api_key = api_keys.get(provider_api_name)
-            tasks.append(self._run_provider(provider, normalized_url, provider_api_key))
+        start = time.monotonic()
+
+        tasks = [
+            self._run_provider(
+                provider,
+                normalized_url,
+                (api_keys or {}).get(getattr(provider, "api_key_name", None) or ""),
+            )
+            for provider in self.providers
+        ]
 
         raw_results = await asyncio.gather(*tasks)
 
         provider_results = [
             ProviderResult(
-                provider=result["provider"],
-                status=result["status"],
-                score=result["score"],
-                confidence=result["confidence"],
-                summary=result["summary"],
-                details=result["details"],
-                dimensions=result.get("dimensions", {}),
+                provider=r["provider"],
+                status=r["status"],
+                score=r["score"],
+                confidence=r["confidence"],
+                summary=r["summary"],
+                details=r["details"],
+                dimensions=r.get("dimensions", {}),
             )
-            for result in raw_results
+            for r in raw_results
         ]
 
         successful = [pr for pr in provider_results if pr.status == "success"]
@@ -125,6 +150,9 @@ class AnalyzerService:
         overall_score = compute_overall_score(score_breakdown)
         average_confidence = compute_global_confidence(successful)
         reasons = build_trust_reasons(provider_results, score_breakdown, successful)
+
+        processing_time_ms = round((time.monotonic() - start) * 1000)
+        providers_count = len(self.providers)
 
         response = AnalysisResponse(
             url=normalized_url,
@@ -136,6 +164,17 @@ class AnalyzerService:
         )
 
         if use_cache:
-            await self._cache.set(normalized_url, response)
+            await self._cache.set(
+                normalized_url,
+                response,
+                providers_count=providers_count,
+                algo_version=APP_VERSION,
+            )
 
-        return response
+        return AnalysisResult(
+            response=response,
+            processing_time_ms=processing_time_ms,
+            providers_count=providers_count,
+            from_cache=False,
+            algo_version=APP_VERSION,
+        )

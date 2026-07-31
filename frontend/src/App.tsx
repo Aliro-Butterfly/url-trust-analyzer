@@ -5,7 +5,7 @@ import { AnalysisForm } from "./components/AnalysisForm";
 import { ApiKeysForm } from "./components/ApiKeysForm";
 import { AuthForm } from "./components/AuthForm";
 import { HistoryList } from "./components/HistoryList";
-import type { AdminConfig, ApiKeysStatus, AuthResponse, HistoryItem } from "./types";
+import type { AdminConfig, ApiKeysStatus, ApiResponse, AuthResponse, HistoryItem } from "./types";
 
 function App() {
   const [user, setUser] = useState<string | null>(null);
@@ -24,7 +24,8 @@ function App() {
     try {
       const response = await fetch("/api/history", { credentials: "include" });
       if (!response.ok) { setHistory([]); return; }
-      setHistory(await response.json());
+      const envelope = (await response.json()) as ApiResponse<HistoryItem[]>;
+      setHistory(envelope.success && envelope.data ? envelope.data : []);
     } catch {
       setHistory([]);
     }
@@ -34,7 +35,8 @@ function App() {
     try {
       const response = await fetch("/api/auth/api-keys", { credentials: "include" });
       if (!response.ok) return;
-      setApiKeyStatus(await response.json());
+      const envelope = (await response.json()) as ApiResponse<ApiKeysStatus>;
+      if (envelope.success && envelope.data) setApiKeyStatus(envelope.data);
     } catch { /* silently ignore */ }
   };
 
@@ -42,7 +44,12 @@ function App() {
     try {
       const response = await fetch("/api/admin/config", { credentials: "include" });
       if (!response.ok) { setIsAdmin(false); return; }
-      setAdminConfig(await response.json());
+      const envelope = (await response.json()) as ApiResponse<AdminConfig>;
+      if (envelope.success && envelope.data) {
+        setAdminConfig(envelope.data);
+      } else {
+        setIsAdmin(false);
+      }
     } catch {
       setIsAdmin(false);
     }
@@ -80,14 +87,14 @@ function App() {
           providers: adminConfig.providers,
         }),
       });
-      if (!response.ok) {
-        const p = await response.json();
-        const msg = Array.isArray(p.detail)
-          ? p.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
-          : p.detail || `HTTP ${response.status}`;
+      const envelope = (await response.json()) as ApiResponse<AdminConfig>;
+      if (!response.ok || !envelope.success) {
+        const msg = envelope.errors?.length
+          ? envelope.errors.join("; ")
+          : envelope.message || `HTTP ${response.status}`;
         throw new Error(msg);
       }
-      setAdminConfig(await response.json());
+      if (envelope.data) setAdminConfig(envelope.data);
       setAdminMessage("Configuration saved successfully.");
     } catch (err) {
       setAdminMessage(err instanceof Error ? err.message : "Save failed");
@@ -99,7 +106,9 @@ function App() {
       try {
         const response = await fetch("/api/auth/me", { credentials: "include" });
         if (!response.ok) return;
-        const payload = (await response.json()) as AuthResponse;
+        const envelope = (await response.json()) as ApiResponse<AuthResponse>;
+        if (!envelope.success || !envelope.data) return;
+        const payload = envelope.data;
         setUser(payload.username);
         setIsAdmin(payload.is_admin === true);
         if (payload.is_admin) {

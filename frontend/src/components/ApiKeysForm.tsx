@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import type { ApiKeysStatus } from "../types";
+import type { ApiKeysStatus, ApiResponse } from "../types";
 
 interface Props {
   status: ApiKeysStatus;
@@ -34,21 +34,21 @@ export function ApiKeysForm({ status, onSaved }: Props) {
         }),
       });
 
-      if (!response.ok) {
-        const payload = await response.json();
-        const msg = Array.isArray(payload.detail)
-          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
-          : payload.detail || `HTTP ${response.status}`;
+      const envelope = (await response.json()) as ApiResponse<ApiKeysStatus>;
+
+      if (!response.ok || !envelope.success) {
+        const msg = envelope.errors?.length
+          ? envelope.errors.join("; ")
+          : envelope.message || `HTTP ${response.status}`;
         throw new Error(msg);
       }
 
-      const payload = (await response.json()) as ApiKeysStatus;
       setUrlscanKey("");
       setGoogleKey("");
       setVtKey("");
       setAbuseipdbKey("");
       setToast({ message: "API keys updated successfully. Only you can use these keys.", kind: "success" });
-      onSaved(payload);
+      onSaved(envelope.data!);
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Unable to update API keys.", kind: "error" });
     } finally {

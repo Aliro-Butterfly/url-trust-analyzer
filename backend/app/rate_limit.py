@@ -3,19 +3,20 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
-# How often (in number of calls per bucket) to sweep stale buckets from memory.
+from .exceptions import RateLimitExceeded
+
+# How often (calls per bucket) to sweep stale buckets from memory.
 _SWEEP_EVERY = 500
 
 
 class RateLimiter:
-    """Simple in-memory sliding-window rate limiter (single-process only).
+    """In-memory sliding-window rate limiter (single-process only).
 
-    Creates a FastAPI-compatible callable dependency. Each instance tracks
-    its own per-IP request buckets independently of other instances.
-    Stale buckets (IPs with no recent requests) are periodically evicted to
-    prevent unbounded memory growth.
+    FastAPI-compatible callable dependency. Each instance tracks its own
+    per-IP buckets independently. Stale buckets are periodically evicted.
     """
 
     def __init__(self, max_requests: int, window_seconds: int) -> None:
@@ -34,10 +35,7 @@ class RateLimiter:
             bucket.popleft()
 
         if len(bucket) >= self._max_requests:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests. Please try again later.",
-            )
+            raise RateLimitExceeded("Too many requests. Please try again later.")
 
         bucket.append(now)
 
@@ -47,7 +45,6 @@ class RateLimiter:
             self._call_count = 0
 
     def _sweep(self, window_start: float) -> None:
-        """Remove buckets that have had no activity within the current window."""
         stale = [ip for ip, q in self._buckets.items() if not q or q[-1] < window_start]
         for ip in stale:
             del self._buckets[ip]

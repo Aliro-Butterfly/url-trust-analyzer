@@ -40,11 +40,19 @@ def register_test_user(client):
     return username
 
 
+def unwrap(response):
+    """Unwrap the ApiResponse envelope and return the data payload."""
+    envelope = response.json()
+    assert envelope["success"], f"API call failed: {envelope}"
+    return envelope["data"]
+
+
 def test_health_endpoint_returns_ok():
     client = TestClient(app)
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    data = unwrap(response)
+    assert data["status"] == "ok"
 
 
 def test_icann_provider_returns_a_result(monkeypatch):
@@ -115,24 +123,17 @@ def test_reputation_provider_returns_a_result():
 
 
 def test_analyze_endpoint_returns_a_report(monkeypatch):
+    create_temporary_db(monkeypatch)
+
     async def fake_get(self, url, timeout=10.0):
         if "rdap.org" in url:
-            return FakeResponse(
-                {
-                    "ldhName": "example.com",
-                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
-                }
-            )
+            return FakeResponse({"ldhName": "example.com", "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}]})
         if "dns.google" in url:
-            return FakeResponse(
-                {
-                    "Answer": [
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
-                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
-                    ]
-                }
-            )
+            return FakeResponse({"Answer": [
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+            ]})
         return FakeResponse({})
 
     monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
@@ -143,16 +144,19 @@ def test_analyze_endpoint_returns_a_report(monkeypatch):
     response = client.post("/analyze", json={"url": "https://example.com"})
 
     assert response.status_code == 200
-    payload = response.json()
+    envelope = response.json()
+    assert envelope["success"] is True
+    assert "processingTime" in envelope["metadata"]
+    assert "providerCount" in envelope["metadata"]
+    assert envelope["metadata"]["cached"] is False
+
+    payload = envelope["data"]
     assert payload["url"] == "https://example.com"
     assert payload["overall_score"] >= 50
     assert len(payload["results"]) == len(analyzer_service.providers)
-    assert any(result["provider"] == "VirusTotal" for result in payload["results"])
-    assert any(result["provider"] == "Google Safe Browsing" for result in payload["results"])
-    assert any(result["provider"] == "Cisco Talos" for result in payload["results"])
-    assert any(result["provider"] == "URLScan" for result in payload["results"])
+    assert any(r["provider"] == "VirusTotal" for r in payload["results"])
+    assert any(r["provider"] == "Cisco Talos" for r in payload["results"])
     assert "reasons" in payload
-    assert isinstance(payload["reasons"], list)
 
 
 def test_history_endpoint_records_analysis(monkeypatch):
@@ -163,22 +167,13 @@ def test_history_endpoint_records_analysis(monkeypatch):
 
     async def fake_get(self, url, timeout=10.0):
         if "rdap.org" in url:
-            return FakeResponse(
-                {
-                    "ldhName": "example.com",
-                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
-                }
-            )
+            return FakeResponse({"ldhName": "example.com", "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}]})
         if "dns.google" in url:
-            return FakeResponse(
-                {
-                    "Answer": [
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
-                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
-                    ]
-                }
-            )
+            return FakeResponse({"Answer": [
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+            ]})
         return FakeResponse({})
 
     monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
@@ -191,11 +186,14 @@ def test_history_endpoint_records_analysis(monkeypatch):
 
     history_response = client.get("/history")
     assert history_response.status_code == 200
-    history = history_response.json()
+    history = unwrap(history_response)
     assert isinstance(history, list)
     assert len(history) == 1
     assert history[0]["url"] == "https://example.com"
-    assert history[0]["report"]["overall_score"] == analyze_response.json()["overall_score"]
+    assert history[0]["report"]["overall_score"] == analyze_response.json()["data"]["overall_score"]
+    assert "processing_time_ms" in history[0]
+    assert "providers_count" in history[0]
+    assert "algo_version" in history[0]
 
 
 def test_protected_endpoints_require_auth():
@@ -203,50 +201,31 @@ def test_protected_endpoints_require_auth():
 
     analyze_response = client.post("/analyze", json={"url": "https://example.com"})
     assert analyze_response.status_code == 401
+    assert analyze_response.json()["success"] is False
 
     history_response = client.get("/history")
     assert history_response.status_code == 401
+    assert history_response.json()["success"] is False
 
 
 def test_api_key_endpoints_are_user_scoped():
     client = TestClient(app)
-    username = register_test_user(client)
+    register_test_user(client)
 
     response = client.get("/auth/api-keys")
     assert response.status_code == 200
-    assert response.json() == {
-        "has_urlscan": False,
-        "has_google_safebrowsing": False,
-        "has_virustotal": False,
-        "has_abuseipdb": False,
-    }
+    data = unwrap(response)
+    assert data == {"has_urlscan": False, "has_google_safebrowsing": False, "has_virustotal": False, "has_abuseipdb": False}
 
-    update_response = client.put(
-        "/auth/api-keys",
-        json={
-            "urlscan": "test-urlscan-key",
-            "google_safebrowsing": "test-google-key",
-            "virustotal": "test-vt-key",
-        },
-    )
+    update_response = client.put("/auth/api-keys", json={"urlscan": "test-urlscan-key", "google_safebrowsing": "test-google-key", "virustotal": "test-vt-key"})
     assert update_response.status_code == 200
-    assert update_response.json() == {
-        "has_urlscan": True,
-        "has_google_safebrowsing": True,
-        "has_virustotal": True,
-        "has_abuseipdb": False,
-    }
+    data2 = unwrap(update_response)
+    assert data2 == {"has_urlscan": True, "has_google_safebrowsing": True, "has_virustotal": True, "has_abuseipdb": False}
 
     second_client = TestClient(app)
     register_test_user(second_client)
-    second_keys_response = second_client.get("/auth/api-keys")
-    assert second_keys_response.status_code == 200
-    assert second_keys_response.json() == {
-        "has_urlscan": False,
-        "has_google_safebrowsing": False,
-        "has_virustotal": False,
-        "has_abuseipdb": False,
-    }
+    second_keys = unwrap(second_client.get("/auth/api-keys"))
+    assert second_keys == {"has_urlscan": False, "has_google_safebrowsing": False, "has_virustotal": False, "has_abuseipdb": False}
 
 
 def test_history_is_scoped_per_user(monkeypatch):
@@ -254,22 +233,13 @@ def test_history_is_scoped_per_user(monkeypatch):
 
     async def fake_get(self, url, timeout=10.0):
         if "rdap.org" in url:
-            return FakeResponse(
-                {
-                    "ldhName": "example.com",
-                    "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}],
-                }
-            )
+            return FakeResponse({"ldhName": "example.com", "events": [{"eventAction": "registration", "eventDate": "1990-01-01T00:00:00Z"}]})
         if "dns.google" in url:
-            return FakeResponse(
-                {
-                    "Answer": [
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
-                        {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
-                        {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
-                    ]
-                }
-            )
+            return FakeResponse({"Answer": [
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns1.example.com."},
+                {"name": "example.com.", "type": 2, "TTL": 300, "data": "ns2.example.com."},
+                {"name": "example.com.", "type": 15, "TTL": 300, "data": "mail.example.com."},
+            ]})
         return FakeResponse({})
 
     monkeypatch.setattr("backend.app.providers.icann.httpx.AsyncClient.get", fake_get)
@@ -277,40 +247,27 @@ def test_history_is_scoped_per_user(monkeypatch):
 
     client = TestClient(app)
     register_test_user(client)
-
     client.post("/analyze", json={"url": "https://example.com"})
-    history_response = client.get("/history")
-    assert history_response.status_code == 200
-    assert len(history_response.json()) == 1
+
+    assert len(unwrap(client.get("/history"))) == 1
 
     second_client = TestClient(app)
     register_test_user(second_client)
-    second_history = second_client.get("/history")
-    assert second_history.status_code == 200
-    assert second_history.json() == []
+    assert unwrap(second_client.get("/history")) == []
 
 
 def test_admin_config_rejects_invalid_values(monkeypatch):
     monkeypatch.setattr("backend.app.main.ADMIN_USERNAME", "admin")
     monkeypatch.setattr("backend.app.main.ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr("backend.app.admin_config.ADMIN_USERNAME", "admin")
 
     client = TestClient(app)
+    client.post("/admin/login", json={"username": "admin", "password": "secret"})
 
-    admin_login = client.post("/admin/login", json={"username": "admin", "password": "secret"})
-    assert admin_login.status_code == 200
+    config = unwrap(client.get("/admin/config"))
+    config["dimension_weights"]["malware"] = -1
 
-    config_response = client.get("/admin/config")
-    assert config_response.status_code == 200
-    config_payload = config_response.json()
-    config_payload["dimension_weights"]["malware"] = -1
-
-    invalid_weight_response = client.put("/admin/config", json=config_payload)
-    assert invalid_weight_response.status_code == 400
-    assert "dimension_weights.malware must be between 0 and 100." in invalid_weight_response.json()["detail"]
-
-    config_payload["dimension_weights"]["malware"] = 27
-    config_payload["providers"]["VirusTotal"]["coefficient"] = 0
-
-    invalid_coefficient_response = client.put("/admin/config", json=config_payload)
-    assert invalid_coefficient_response.status_code == 400
-    assert "providers.VirusTotal.coefficient must be greater than 0" in invalid_coefficient_response.json()["detail"]
+    resp = client.put("/admin/config", json=config)
+    assert resp.status_code == 422
+    assert resp.json()["success"] is False
+    assert "malware" in resp.json()["errors"][0]

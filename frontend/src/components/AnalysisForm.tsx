@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import type { AnalysisResponse } from "../types";
+import type { AnalysisResponse, ApiResponse } from "../types";
 import { AnalysisResults } from "./AnalysisResults";
 
 interface Props {
@@ -12,12 +12,14 @@ export function AnalysisForm({ onResult }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [meta, setMeta] = useState<{ processingTime?: number; cached?: boolean } | null>(null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
     setError(null);
     setAnalysis(null);
+    setMeta(null);
 
     try {
       const response = await fetch("/api/analyze", {
@@ -27,16 +29,20 @@ export function AnalysisForm({ onResult }: Props) {
         body: JSON.stringify({ url }),
       });
 
-      if (!response.ok) {
-        const payload = await response.json();
-        const msg = Array.isArray(payload.detail)
-          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
-          : payload.detail || `HTTP ${response.status}`;
+      const envelope = (await response.json()) as ApiResponse<AnalysisResponse>;
+
+      if (!response.ok || !envelope.success) {
+        const msg = envelope.errors?.length
+          ? envelope.errors.join("; ")
+          : envelope.message || `HTTP ${response.status}`;
         throw new Error(msg);
       }
 
-      const payload = (await response.json()) as AnalysisResponse;
-      setAnalysis(payload);
+      setAnalysis(envelope.data);
+      setMeta({
+        processingTime: envelope.metadata?.processingTime,
+        cached: envelope.metadata?.cached,
+      });
       onResult();
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred.");
@@ -61,6 +67,16 @@ export function AnalysisForm({ onResult }: Props) {
       </form>
 
       {error && <div className="toast error">{error}</div>}
+
+      {meta && (
+        <div className="analysis-meta">
+          {meta.cached && <span className="badge cached">Cached</span>}
+          {meta.processingTime !== undefined && (
+            <span className="badge timing">{meta.processingTime} ms</span>
+          )}
+        </div>
+      )}
+
       {analysis && <AnalysisResults analysis={analysis} />}
     </section>
   );

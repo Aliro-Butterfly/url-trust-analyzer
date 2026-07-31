@@ -1,11 +1,12 @@
-﻿import logging
-import os
+from __future__ import annotations
+
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, status
+from fastapi import Cookie, Depends, FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .admin_config import (
@@ -15,6 +16,18 @@ from .admin_config import (
     update_config,
 )
 from .auth import AUTH_COOKIE_NAME, create_access_token, decode_access_token, hash_password, verify_password
+from .config import (
+    ADMIN_COOKIE_NAME,
+    ADMIN_TOKEN_EXPIRE_SECONDS,
+    APP_VERSION,
+    COOKIE_SECURE,
+    LOG_FILE,
+    LOG_LEVEL,
+    RATE_LIMIT_ADMIN_MAX,
+    RATE_LIMIT_ADMIN_WINDOW,
+    RATE_LIMIT_AUTH_MAX,
+    RATE_LIMIT_AUTH_WINDOW,
+)
 from .database import (
     create_user,
     fetch_api_keys,
@@ -24,28 +37,30 @@ from .database import (
     save_analysis,
     save_api_key,
 )
+from .exceptions import (
+    AppError,
+    AuthenticationError,
+    AuthorizationError,
+    RateLimitExceeded,
+)
+from .logging_config import setup_logging
 from .rate_limit import RateLimiter
 from .schemas import (
     AnalysisResponse,
     AnalyzeRequest,
     ApiKeysStatus,
     ApiKeysUpdate,
+    ApiResponse,
     AuthResponse,
     HistoryItem,
     LoginRequest,
+    ResponseMetadata,
     UserCreate,
 )
 from .services.analyzer import AnalyzerService
 
-_LOG_FILE = Path(__file__).resolve().parent.parent / "backend_api.log"
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(levelname)s:%(name)s:%(message)s",
-    handlers=[
-        logging.FileHandler(str(_LOG_FILE), mode="a"),
-        logging.StreamHandler(),
-    ],
-)
+setup_logging(log_file=LOG_FILE, level=LOG_LEVEL)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -54,68 +69,93 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="URL Trust Analyzer - Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="URL Trust Analyzer",
+    version=APP_VERSION,
+    lifespan=lifespan,
+    # Never expose internal error details in production
+    openapi_url="/openapi.json",
+)
+
 analyzer_service = AnalyzerService()
-ADMIN_COOKIE_NAME = "admin_token"
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+_auth_limiter = RateLimiter(max_requests=RATE_LIMIT_AUTH_MAX, window_seconds=RATE_LIMIT_AUTH_WINDOW)
+_admin_limiter = RateLimiter(max_requests=RATE_LIMIT_ADMIN_MAX, window_seconds=RATE_LIMIT_ADMIN_WINDOW)
 
-_auth_limiter = RateLimiter(max_requests=20, window_seconds=60)
-_admin_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
+# ── Global exception handlers ─────────────────────────────────────────────────
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ApiResponse.error(exc.message, exc.details).model_dump(),
+    )
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content=ApiResponse.error(exc.message).model_dump(),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = [f"{' -> '.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=ApiResponse.error("Validation error.", errors).model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=ApiResponse.error("An unexpected error occurred. Please try again later.").model_dump(),
+    )
+
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def get_current_user(auth_token: str | None = Cookie(default=None)) -> dict[str, Any]:
     if not auth_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required.",
-        )
-
+        raise AuthenticationError("Authentication required.")
     payload = decode_access_token(auth_token)
     if not payload or "sub" not in payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token.",
-        )
-
+        raise AuthenticationError("Invalid or expired authentication token.")
     user = get_user_by_username(payload["sub"])
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found.",
-        )
+        raise AuthenticationError("User not found.")
     return user
-
-
-def create_auth_response(username: str) -> JSONResponse:
-    access_token = create_access_token(username)
-    response = JSONResponse({"username": username})
-    response.set_cookie(
-        AUTH_COOKIE_NAME,
-        access_token,
-        httponly=True,
-        samesite="strict",
-        secure=COOKIE_SECURE,
-        max_age=30 * 60,
-        path="/",
-    )
-    return response
 
 
 def require_admin(request: Request) -> bool:
     token = request.cookies.get(ADMIN_COOKIE_NAME)
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin authentication required.",
-        )
+        raise AuthorizationError("Admin authentication required.")
     payload = decode_access_token(token)
     if not payload or not payload.get("is_admin"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired admin token.",
-        )
+        raise AuthorizationError("Invalid or expired admin token.")
     return True
 
+
+def _make_auth_cookie_response(username: str) -> JSONResponse:
+    access_token = create_access_token(username)
+    response = JSONResponse(
+        ApiResponse.ok(AuthResponse(username=username).model_dump()).model_dump()
+    )
+    response.set_cookie(
+        AUTH_COOKIE_NAME, access_token,
+        httponly=True, samesite="strict", secure=COOKIE_SECURE,
+        max_age=30 * 60, path="/",
+    )
+    return response
+
+
+# ── Request bodies ────────────────────────────────────────────────────────────
 
 @dataclass
 class AdminLoginRequest:
@@ -129,132 +169,142 @@ class AdminConfigUpdate:
     providers: dict[str, dict] | None = None
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return ApiResponse.ok({"status": "ok", "version": APP_VERSION}, "Service operational.")
 
 
-@app.post("/auth/register", response_model=AuthResponse)
-def register(user: UserCreate, _: None = Depends(_auth_limiter)) -> JSONResponse:
+@app.post("/auth/register")
+def register(user: UserCreate, _: None = Depends(_auth_limiter)):
     if get_user_by_username(user.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists.",
-        )
-
+        from .exceptions import ValidationError
+        raise ValidationError("Username already exists.")
     create_user(user.username, hash_password(user.password))
-    return create_auth_response(user.username)
+    return _make_auth_cookie_response(user.username)
 
 
-@app.post("/auth/login", response_model=AuthResponse)
-def login(user: LoginRequest, _: None = Depends(_auth_limiter)) -> JSONResponse:
+@app.post("/auth/login")
+def login(user: LoginRequest, _: None = Depends(_auth_limiter)):
     if ADMIN_USERNAME and ADMIN_PASSWORD and user.username == ADMIN_USERNAME and user.password == ADMIN_PASSWORD:
         admin_token = create_access_token(user.username, extra_claims={"is_admin": True})
-        response = JSONResponse({"username": user.username, "is_admin": True})
+        response = JSONResponse(
+            ApiResponse.ok(
+                AuthResponse(username=user.username, is_admin=True).model_dump()
+            ).model_dump()
+        )
         response.set_cookie(AUTH_COOKIE_NAME, create_access_token(user.username), httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=30 * 60, path="/")
-        response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=3600, path="/")
+        response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=ADMIN_TOKEN_EXPIRE_SECONDS, path="/")
         return response
 
     stored_user = get_user_by_username(user.username)
     if not stored_user or not verify_password(user.password, stored_user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password.",
-        )
-
-    return create_auth_response(user.username)
+        raise AuthenticationError("Incorrect username or password.")
+    return _make_auth_cookie_response(user.username)
 
 
 @app.post("/auth/logout")
-def logout() -> JSONResponse:
-    response = JSONResponse({"detail": "Logged out."})
+def logout():
+    response = JSONResponse(ApiResponse.ok(None, "Logged out.").model_dump())
     response.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return response
 
 
-@app.get("/auth/me", response_model=AuthResponse)
-def me(current_user: dict[str, Any] = Depends(get_current_user)) -> AuthResponse:
+@app.get("/auth/me")
+def me(current_user: dict[str, Any] = Depends(get_current_user)):
     is_admin = current_user["username"] == ADMIN_USERNAME
-    return {"username": current_user["username"], "is_admin": is_admin}
+    return ApiResponse.ok(AuthResponse(username=current_user["username"], is_admin=is_admin).model_dump())
 
 
-@app.post("/analyze", response_model=AnalysisResponse)
-async def analyze(
-    request: AnalyzeRequest, current_user: dict[str, Any] = Depends(get_current_user)
-) -> AnalysisResponse:
+@app.post("/analyze")
+async def analyze(request: AnalyzeRequest, current_user: dict[str, Any] = Depends(get_current_user)):
     api_keys = fetch_api_keys(current_user["username"])
-    result = await analyzer_service.analyze(request, api_keys=api_keys)
-    save_analysis(result.model_dump(), current_user["username"])
-    return result
+    result = await analyzer_service.analyze(request, api_keys=api_keys or None)
 
+    save_analysis(
+        result.response.model_dump(),
+        current_user["username"],
+        processing_time_ms=result.processing_time_ms,
+        providers_count=result.providers_count,
+        algo_version=result.algo_version,
+        from_cache=result.from_cache,
+    )
 
-@app.get("/auth/api-keys", response_model=ApiKeysStatus)
-def get_api_keys(current_user: dict[str, Any] = Depends(get_current_user)) -> ApiKeysStatus:
-    api_keys = fetch_api_keys(current_user["username"])
-    return ApiKeysStatus(
-        has_urlscan=bool(api_keys.get("URLSCAN")),
-        has_google_safebrowsing=bool(api_keys.get("GOOGLE_SAFEBROWSING")),
-        has_virustotal=bool(api_keys.get("VIRUSTOTAL")),
-        has_abuseipdb=bool(api_keys.get("ABUSEIPDB")),
+    return ApiResponse.ok(
+        result.response,
+        processing_time_ms=result.processing_time_ms,
+        provider_count=result.providers_count,
+        cached=result.from_cache,
     )
 
 
-@app.put("/auth/api-keys", response_model=ApiKeysStatus)
-def update_api_keys(
-    update: ApiKeysUpdate, current_user: dict[str, Any] = Depends(get_current_user)
-) -> ApiKeysStatus:
+@app.get("/auth/api-keys")
+def get_api_keys(current_user: dict[str, Any] = Depends(get_current_user)):
+    keys = fetch_api_keys(current_user["username"])
+    return ApiResponse.ok(ApiKeysStatus(
+        has_urlscan=bool(keys.get("URLSCAN")),
+        has_google_safebrowsing=bool(keys.get("GOOGLE_SAFEBROWSING")),
+        has_virustotal=bool(keys.get("VIRUSTOTAL")),
+        has_abuseipdb=bool(keys.get("ABUSEIPDB")),
+    ))
+
+
+@app.put("/auth/api-keys")
+def update_api_keys(update: ApiKeysUpdate, current_user: dict[str, Any] = Depends(get_current_user)):
     save_api_key(current_user["username"], "URLSCAN", update.urlscan)
     save_api_key(current_user["username"], "GOOGLE_SAFEBROWSING", update.google_safebrowsing)
     save_api_key(current_user["username"], "VIRUSTOTAL", update.virustotal)
     save_api_key(current_user["username"], "ABUSEIPDB", update.abuseipdb)
-    return get_api_keys(current_user)
+    keys = fetch_api_keys(current_user["username"])
+    return ApiResponse.ok(ApiKeysStatus(
+        has_urlscan=bool(keys.get("URLSCAN")),
+        has_google_safebrowsing=bool(keys.get("GOOGLE_SAFEBROWSING")),
+        has_virustotal=bool(keys.get("VIRUSTOTAL")),
+        has_abuseipdb=bool(keys.get("ABUSEIPDB")),
+    ))
 
 
-@app.get("/history", response_model=list[HistoryItem])
-def history(current_user: dict[str, Any] = Depends(get_current_user)) -> list[HistoryItem]:
-    return fetch_history(username=current_user["username"])
+@app.get("/history")
+def history(current_user: dict[str, Any] = Depends(get_current_user)):
+    items = fetch_history(username=current_user["username"])
+    return ApiResponse.ok(items, provider_count=None)
 
 
 @app.post("/admin/login")
 def admin_login(body: AdminLoginRequest, _: None = Depends(_admin_limiter)):
     if body.username != ADMIN_USERNAME or body.password != ADMIN_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect admin credentials.",
-        )
+        raise AuthenticationError("Incorrect admin credentials.")
     admin_token = create_access_token(body.username, extra_claims={"is_admin": True})
-    response = JSONResponse({"admin": True})
-    response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=3600, path="/")
+    response = JSONResponse(ApiResponse.ok({"admin": True}).model_dump())
+    response.set_cookie(ADMIN_COOKIE_NAME, admin_token, httponly=True, samesite="strict", secure=COOKIE_SECURE, max_age=ADMIN_TOKEN_EXPIRE_SECONDS, path="/")
     return response
 
 
 @app.post("/admin/logout")
 def admin_logout():
-    response = JSONResponse({"detail": "Admin logged out."})
+    response = JSONResponse(ApiResponse.ok(None, "Admin logged out.").model_dump())
     response.delete_cookie(ADMIN_COOKIE_NAME, path="/")
     return response
 
 
 @app.get("/admin/config")
 def admin_get_config(_=Depends(require_admin)):
-    return get_full_config()
+    return ApiResponse.ok(get_full_config())
 
 
 @app.put("/admin/config")
 def admin_update_config(body: AdminConfigUpdate, _=Depends(require_admin)):
     try:
-        return update_config(
+        return ApiResponse.ok(update_config(
             dimension_weights=body.dimension_weights,
             providers=body.providers,
-        )
+        ))
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        from .exceptions import ValidationError
+        raise ValidationError(str(exc)) from exc
 
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run("backend.app.main:app", host="127.0.0.1", port=8000, reload=True)

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from pathlib import Path
+
+from .config import ADMIN_CONFIG_PATH, ADMIN_PASSWORD, ADMIN_USERNAME
 
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = CONFIG_DIR / "admin_config.json"
+CONFIG_PATH = ADMIN_CONFIG_PATH
 
 DEFAULT_PROVIDERS = {
     "VirusTotal": {
@@ -262,6 +261,3 @@ def update_config(dimension_weights: dict[str, int] | None = None,
         raise
     return get_full_config()
 
-
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")

@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import type { AuthResponse } from "../types";
+import type { ApiResponse, AuthResponse } from "../types";
 
 interface Props {
   onSuccess: (payload: AuthResponse) => void;
@@ -25,18 +25,18 @@ export function AuthForm({ onSuccess }: Props) {
         body: JSON.stringify({ username, password }),
       });
 
-      if (!response.ok) {
-        const payload = await response.json();
-        const msg = Array.isArray(payload.detail)
-          ? payload.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join("; ")
-          : payload.detail || `HTTP ${response.status}`;
+      const envelope = (await response.json()) as ApiResponse<AuthResponse>;
+
+      if (!response.ok || !envelope.success) {
+        const msg = envelope.errors?.length
+          ? envelope.errors.join("; ")
+          : envelope.message || `HTTP ${response.status}`;
         throw new Error(msg);
       }
 
-      const payload = (await response.json()) as AuthResponse;
       setUsername("");
       setPassword("");
-      onSuccess(payload);
+      onSuccess(envelope.data!);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication error occurred.");
     } finally {

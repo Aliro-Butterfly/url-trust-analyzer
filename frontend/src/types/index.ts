@@ -23,6 +23,10 @@ export interface HistoryItem {
   confidence: number;
   created_at: string;
   report: AnalysisResponse;
+  processing_time_ms?: number;
+  providers_count?: number;
+  algo_version?: string;
+  from_cache?: boolean;
 }
 
 export interface AuthResponse {
@@ -40,4 +44,20 @@ export interface ApiKeysStatus {
 export interface AdminConfig {
   dimension_weights: Record<string, number>;
   providers: Record<string, { coefficient: number; dimensions: Record<string, number> }>;
+}
+
+export interface ResponseMetadata {
+  timestamp: string;
+  version: string;
+  processingTime?: number;
+  providerCount?: number;
+  cached?: boolean;
+}
+
+export interface ApiResponse<T> {
+  success: boolean;
+  message: string;
+  data: T | null;
+  errors: string[];
+  metadata: ResponseMetadata;
 }
