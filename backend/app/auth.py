@@ -7,7 +7,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 
@@ -61,5 +62,5 @@ def create_access_token(username: str, expires_delta: timedelta | None = None, e
 def decode_access_token(token: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError:
+    except InvalidTokenError:
         return None

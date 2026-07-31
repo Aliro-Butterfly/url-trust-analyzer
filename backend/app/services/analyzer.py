@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from ..providers import (
@@ -25,6 +26,10 @@ from ..providers import (
 from ..providers.base import Provider
 from ..schemas import AnalysisResponse, AnalyzeRequest, ProviderResult
 from ..scoring.scorer import build_trust_reasons, compute_category_scores, compute_global_confidence, compute_overall_score
+
+# Hard cap per individual provider. Prevents a single slow provider from
+# blocking all others when they run concurrently via asyncio.gather.
+PROVIDER_TIMEOUT_SECONDS = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "30"))
 
 
 class AnalyzerService:
@@ -52,9 +57,22 @@ class AnalyzerService:
     async def _run_provider(
         self, provider: Provider, url: str, api_key: str | None
     ) -> dict[str, Any]:
-        """Run a single provider and always return a valid result dict, even on unexpected exceptions."""
+        """Run a single provider with a hard timeout, always returning a valid result dict."""
         try:
-            return await provider.analyze(url, api_key)
+            return await asyncio.wait_for(
+                provider.analyze(url, api_key),
+                timeout=PROVIDER_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            return {
+                "provider": provider.name,
+                "status": "error",
+                "score": 50,
+                "confidence": 0,
+                "summary": f"{provider.name} timed out after {PROVIDER_TIMEOUT_SECONDS:.0f}s.",
+                "details": {},
+                "dimensions": {},
+            }
         except Exception as exc:
             return {
                 "provider": provider.name,
