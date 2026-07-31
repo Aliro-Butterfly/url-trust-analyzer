@@ -1,5 +1,11 @@
 import { useState } from "react";
 import type { AnalysisResponse } from "../types";
+import {
+  getConsensusSummary,
+  getRiskExplanation,
+  getRiskLabel,
+  listContradictions,
+} from "../utils/analysis";
 import { buildReportLines, downloadBlob, formatDetail, hasData, scoreClass } from "../utils/format";
 
 interface Props {
@@ -8,7 +14,12 @@ interface Props {
 
 export function AnalysisResults({ analysis }: Props) {
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
+  const [expertMode, setExpertMode] = useState(false);
   const safeName = analysis.url.replace(/[^a-z0-9]/gi, "_").slice(0, 40);
+  const consensus = getConsensusSummary(analysis);
+  const contradictions = listContradictions(analysis);
+  const riskLabel = getRiskLabel(analysis.overall_score);
+  const riskExplanation = getRiskExplanation(analysis.overall_score);
 
   const downloadReport = () => {
     downloadBlob(buildReportLines(analysis).join("\n"), "text/plain;charset=utf-8", `${safeName}_report.txt`);
@@ -47,6 +58,14 @@ export function AnalysisResults({ analysis }: Props) {
         <button type="button" onClick={downloadCSV} className="secondary-button">
           .CSV Export
         </button>
+        <button
+          type="button"
+          onClick={() => setExpertMode((previous) => !previous)}
+          className="secondary-button"
+          aria-pressed={expertMode}
+        >
+          {expertMode ? "Standard mode" : "Expert mode"}
+        </button>
       </div>
 
       <div className="result-header">
@@ -57,12 +76,38 @@ export function AnalysisResults({ analysis }: Props) {
         <div>
           <p>Overall score</p>
           <strong>{analysis.overall_score} / 100</strong>
+          <span className={`risk-chip ${scoreClass(analysis.overall_score)}`}>{riskLabel}</span>
         </div>
         <div>
           <p>Confidence</p>
           <strong>{analysis.confidence}%</strong>
         </div>
       </div>
+
+      <section className="summary-section" aria-label="Résumé de décision">
+        <h2>Decision summary</h2>
+        <p>{riskExplanation}</p>
+        <ul>
+          <li>Providers favorables : <strong>{consensus.safe}</strong></li>
+          <li>Providers défavorables : <strong>{consensus.risky}</strong></li>
+          <li>Providers indisponibles / incertains : <strong>{consensus.unknown}</strong></li>
+        </ul>
+      </section>
+
+      {consensus.hasDisagreement && (
+        <section className="contradictions-card" aria-label="Contradictions entre providers">
+          <h2>Provider contradictions detected</h2>
+          <p>Certains providers ne donnent pas la même conclusion. Vérifiez ces écarts avant décision.</p>
+          <ul>
+            {contradictions.map((item, index) => (
+              <li key={`${item.safe.provider}-${item.risky.provider}-${index}`}>
+                <strong>{item.risky.provider}</strong> indique un risque (score {item.risky.score}),
+                alors que <strong>{item.safe.provider}</strong> est favorable (score {item.safe.score}).
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="analysis-reasons">
         <h2>Why?</h2>
@@ -75,6 +120,7 @@ export function AnalysisResults({ analysis }: Props) {
 
       <div className="breakdown-card">
         <h2>Score Breakdown</h2>
+        <p className="subtext">Chaque catégorie contribue au score global (0 = très risqué, 100 = très fiable).</p>
         <div className="breakdown-list">
           {Object.entries(analysis.score_breakdown).map(([dimension, value]) => (
             <div key={dimension} className="breakdown-item">
@@ -162,6 +208,17 @@ export function AnalysisResults({ analysis }: Props) {
             );
           })}
         </div>
+      )}
+
+      {expertMode && (
+        <section className="expert-section">
+          <h2>Expert details</h2>
+          <p className="subtext">Données techniques complètes (mode développeur).</p>
+          <details>
+            <summary>Raw JSON</summary>
+            <pre>{JSON.stringify(analysis, null, 2)}</pre>
+          </details>
+        </section>
       )}
     </>
   );
